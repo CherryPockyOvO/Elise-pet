@@ -54,4 +54,6 @@ export const ICON_FILL: Record<string, number> = {
   chevrons_up: 3.37, sleep_zzz: 2.13, sparkles: 2.13, spiral: 1.67,
   heart_sparkle: 1.78, star: 2.84, heart: 1.75, close_round: 2.17, close: 3.71,
   question: 1.97, exclamation: 1.91, double_exclamation: 2.08, alert: 2.39,
+  settings: 2.94, music_note: 1.87, sweat_drop: 2.13, thought_bubble: 1.35,
+  refresh: 2.21, chat_dots: 2.56, blush_lines: 1.45, bell: 2.91,
 };

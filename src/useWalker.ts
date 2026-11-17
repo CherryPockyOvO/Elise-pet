@@ -30,7 +30,8 @@ const CAT_LEFT_DX = -166;
 const CAT_SPEED = 0.42;
 const CAT_FRAME_MS = 150;
 
-export type WalkPhase = 'off' | 'walk' | 'turn';
+/** `pause`: still in walk mode but standing still (e.g. while the menu is open). */
+export type WalkPhase = 'off' | 'walk' | 'turn' | 'pause';
 type Facing = 1 | -1;
 
 export type WalkerRefs = {
@@ -38,6 +39,8 @@ export type WalkerRefs = {
   sprite: RefObject<HTMLSpanElement | null>;
   cat: RefObject<HTMLButtonElement | null>;
   catImage: RefObject<HTMLImageElement | null>;
+  /** Elise's display scale; stride length (and so speed) scales with it. */
+  scale: RefObject<number>;
 };
 
 function spritePosition(frame: number) {
@@ -75,6 +78,7 @@ export function useWalker(refs: WalkerRefs) {
     sending: false,
     sentX: Number.NaN,
     token: 0,
+    pausedFrom: 'walk' as WalkPhase,
   });
 
   const applySprite = useCallback(() => {
@@ -126,7 +130,7 @@ export function useWalker(refs: WalkerRefs) {
       let left = dt;
       while (left > 0) {
         const step = Math.min(left, FRAME_MS[s.frame] - s.frameTime);
-        s.x += s.facing * FRAME_SPEED[s.frame] * step;
+        s.x += s.facing * FRAME_SPEED[s.frame] * (refs.scale.current ?? 1) * step;
         s.frameTime += step;
         left -= step;
         if (s.frameTime >= FRAME_MS[s.frame] - 1e-6) {
@@ -175,8 +179,9 @@ export function useWalker(refs: WalkerRefs) {
     }
 
     apply();
-    s.raf = s.phase !== 'off' || s.catMoving ? requestAnimationFrame(tick) : 0;
-  }, [apply]);
+    const active = s.phase === 'walk' || s.phase === 'turn' || s.catMoving;
+    s.raf = active ? requestAnimationFrame(tick) : 0;
+  }, [apply, refs.scale]);
 
   const ensureLoop = useCallback(() => {
     const s = sim.current;
@@ -229,6 +234,21 @@ export function useWalker(refs: WalkerRefs) {
     ensureLoop();
   }, [ensureLoop]);
 
+  /** Stand still without leaving walk mode; resumes where it left off. */
+  const setPaused = useCallback((paused: boolean) => {
+    const s = sim.current;
+    if (paused && (s.phase === 'walk' || s.phase === 'turn')) {
+      s.pausedFrom = s.phase;
+      s.phase = 'pause';
+      setPhase('pause');
+      ensureLoop();
+    } else if (!paused && s.phase === 'pause') {
+      s.phase = s.pausedFrom;
+      setPhase(s.pausedFrom);
+      ensureLoop();
+    }
+  }, [ensureLoop]);
+
   useEffect(() => () => {
     const s = sim.current;
     if (s.raf) cancelAnimationFrame(s.raf);
@@ -241,5 +261,5 @@ export function useWalker(refs: WalkerRefs) {
     if (element) applySprite();
   }, [applySprite, refs.sprite]);
 
-  return { phase, facing, catMoving, start, stop, spriteRef };
+  return { phase, facing, catMoving, start, stop, setPaused, spriteRef };
 }

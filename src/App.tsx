@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   CAT_WALK_IMAGES, PRELOAD, catImages, eliseImages,
@@ -9,8 +9,10 @@ import { Icon } from './Icon';
 import { PetMenu, type MenuSection } from './PetMenu';
 import { useClickThrough } from './useClickThrough';
 import { STAGE_WIDTH, useWalker } from './useWalker';
+import { AUTONOMY_DELAY, useSettings } from './settings';
 
-type Bubble = { id: number; text: string; icon?: string };
+type Bubble = { id: number; text: string; icon?: string; mood?: Expression };
+type Emote = { icon: string; text?: string; mood: Expression };
 
 const DRAG_THRESHOLD = 4;
 /** Height of the top of Elise's head above the stage bottom, per layout. */
@@ -26,7 +28,34 @@ const REPLIES = [
   '要不要休息一下？我陪你。',
 ];
 
+/** Mood bubbles she pops up on her own. Icon-only ones are quick reactions. */
+const EMOTES: Emote[] = [
+  { icon: 'music_note', text: '哼哼～♪', mood: 'happy' },
+  { icon: 'heart', mood: 'happy' },
+  { icon: 'sparkles', mood: 'happy' },
+  { icon: 'question', mood: 'thinking' },
+  { icon: 'blush_lines', mood: 'shy' },
+  { icon: 'sweat_drop', text: '有點睏了…', mood: 'sleepy' },
+  { icon: 'thought_bubble', text: '晚餐要吃什麼呢…', mood: 'thinking' },
+  { icon: 'star', text: '今天也要加油喔！', mood: 'happy' },
+  { icon: 'chat_heart', text: '要記得喝水喔。', mood: 'speaking' },
+  { icon: 'heart_sparkle', text: '小貓好可愛～', mood: 'happy' },
+];
+const NIGHT_EMOTE: Emote = { icon: 'sleep_zzz', text: '已經很晚了，早點休息吧。', mood: 'sleepy' };
+const SLEEP_EMOTE: Emote = { icon: 'sleep_zzz', mood: 'sleepy' };
+/** Elise's feet sit this far above the stage bottom; scaling is anchored there. */
+const FEET_HEIGHT = 34;
+
 const pick = <T,>(items: T[]) => items[Math.floor(Math.random() * items.length)];
+/** Runs one option, chosen with probability proportional to its weight. */
+function weighted(options: [number, () => void][]) {
+  const total = options.reduce((sum, [weight]) => sum + weight, 0);
+  let roll = Math.random() * total;
+  for (const [weight, run] of options) {
+    roll -= weight;
+    if (roll < 0) { run(); return; }
+  }
+}
 let nextId = 1;
 
 export function App() {
@@ -41,15 +70,28 @@ export function App() {
   const [catAct, setCatAct] = useState<CatAct | null>(null);
   const [menu, setMenu] = useState(false);
   const [bubble, setBubble] = useState<Bubble | null>(null);
+  const [lifeTick, setLifeTick] = useState(0);
+  const { settings, update: updateSettings, reset: resetSettings } = useSettings();
 
   const stageRef = useRef<HTMLDivElement>(null);
   const spriteRef = useRef<HTMLSpanElement>(null);
   const catRef = useRef<HTMLButtonElement>(null);
   const catImageRef = useRef<HTMLImageElement>(null);
   const timers = useRef<Record<string, number>>({});
-  const walker = useWalker({ stage: stageRef, sprite: spriteRef, cat: catRef, catImage: catImageRef });
+  const scaleRef = useRef(settings.eliseSize);
+  scaleRef.current = settings.eliseSize;
+  /** Who started the current walk: random walks end on their own. */
+  const walkOrigin = useRef<'user' | 'auto'>('user');
+  const walker = useWalker({ stage: stageRef, sprite: spriteRef, cat: catRef, catImage: catImageRef, scale: scaleRef });
   const walking = walker.phase !== 'off';
-  const turning = walker.phase === 'turn';
+  const striding = walker.phase === 'walk';
+  const { setPaused } = walker;
+
+  // The menu and chat live in the pet window, which moves while walking.
+  // Stand still while they are open so they don't slide away from the cursor.
+  useEffect(() => {
+    setPaused(menu || chatOpen);
+  }, [menu, chatOpen, walker.phase, setPaused]);
 
   useClickThrough();
 
@@ -70,8 +112,8 @@ export function App() {
     };
   }, []);
 
-  const say = useCallback((text: string, bubbleIcon?: string, ms = 3200) => {
-    setBubble({ id: nextId++, text, icon: bubbleIcon });
+  const say = useCallback((text: string, bubbleIcon?: string, ms = 3200, mood?: Expression) => {
+    setBubble({ id: nextId++, text, icon: bubbleIcon, mood });
     later('bubble', ms, () => setBubble(null));
   }, [later]);
 
@@ -92,19 +134,77 @@ export function App() {
     setCatAct(null);
   }, [cancel]);
 
-  // Idle life: every so often Elise glances around or the cat does something.
-  const calm = !walking && pose === 'idle' && !act && !catAct && !menu && catPose === 'sit';
+  function emote(choice?: Emote) {
+    const hour = new Date().getHours();
+    const lateNight = hour >= 23 || hour < 6;
+    const chosen = choice ?? (lateNight && Math.random() < 0.3 ? NIGHT_EMOTE : pick(EMOTES));
+    say(chosen.text ?? '', chosen.icon, chosen.text ? 3200 : 1800, chosen.mood);
+  }
+
+  function randomCatAct() {
+    if (catPose === 'loaf') {
+      weighted([[2, () => setCatPose('sit')], [1, () => playCat('stretch')]]);
+      return;
+    }
+    weighted([
+      [2, () => playCat('stretch')],
+      [2, () => playCat('wave')],
+      [1, () => playCat('roll')],
+      [1.5, () => setCatPose('loaf')],
+      [0.8, () => playCat('happy')],
+    ]);
+  }
+
+  function wanderAround() {
+    walkOrigin.current = 'auto';
+    setPose('idle');
+    setCatPose('sit');
+    void walker.start();
+    later('autowalk', 6000 + Math.random() * 9000, () => {
+      if (walkOrigin.current === 'auto') walker.stop();
+    });
+  }
+
+  /** One random behaviour, picked to suit what she is doing right now. */
+  function liveALittle() {
+    if (walking) {
+      emote();
+    } else if (pose === 'sleep') {
+      weighted([
+        [3, () => emote(SLEEP_EMOTE)],
+        [settings.autonomy === 'low' ? 0.3 : 1, () => { setPose('idle'); setCatPose('sit'); say('嗯～睡飽了。', 'sparkles', 2400, 'happy'); }],
+      ]);
+    } else if (pose === 'sit') {
+      weighted([
+        [3, () => emote()],
+        [2, randomCatAct],
+        [1.5, () => setPose('idle')],
+        [0.6, () => { setPose('sleep'); setCatPose('sleep'); }],
+      ]);
+    } else {
+      weighted([
+        [3, () => emote()],
+        [2, () => playElise('idleAlt', 2600)],
+        [3, randomCatAct],
+        [1, petCat],
+        [1.2, () => setPose('sit')],
+        [settings.wander ? 1.2 : 0, wanderAround],
+        [0.3, () => { setPose('sleep'); setCatPose('sleep'); }],
+      ]);
+    }
+    setLifeTick(tick => tick + 1);
+  }
+  const liveRef = useRef(liveALittle);
+  liveRef.current = liveALittle;
+
+  // Random life: wait a while, then do something, then wait again.
+  const busy = menu || chatOpen || act !== null || catAct !== null;
   useEffect(() => {
-    if (!calm) return;
-    const id = window.setTimeout(() => {
-      const roll = Math.random();
-      if (roll < 0.4) playElise('idleAlt', 2600);
-      else if (roll < 0.65) playCat('stretch');
-      else if (roll < 0.85) playCat('wave');
-      else playCat('roll');
-    }, 8000 + Math.random() * 7000);
+    if (settings.autonomy === 'off' || busy) return;
+    const [min, max] = AUTONOMY_DELAY[settings.autonomy];
+    const id = window.setTimeout(() => liveRef.current(), (min + Math.random() * (max - min)) * 1000);
     return () => window.clearTimeout(id);
-  }, [calm, playCat, playElise]);
+  }, [settings.autonomy, busy, pose, catPose, walking, lifeTick]);
 
   function poke() {
     if (act === 'petCat') return;
@@ -134,6 +234,8 @@ export function App() {
     resetActs();
     setPose('idle');
     setCatPose('sit');
+    cancel('autowalk');
+    walkOrigin.current = 'user';
     if (walking) {
       walker.stop();
     } else {
@@ -222,15 +324,16 @@ export function App() {
     };
   }
 
-  const mood: Expression =
+  const mood: Expression = bubble?.mood ?? (
     act === 'surprised' ? 'surprised'
       : act === 'petCat' || walking ? 'happy'
         : pose === 'sleep' ? 'sleepy'
           : pose === 'sit' ? 'shy'
-            : typing ? 'speaking' : 'neutral';
+            : typing ? 'speaking' : 'neutral');
 
   const status =
-    walking ? '和小貓散步中…'
+    walker.phase === 'pause' ? '散步中，先停下來陪你'
+      : walking ? '和小貓散步中…'
       : act === 'petCat' ? '正在摸摸小貓'
         : pose === 'sleep' ? '睡著了 Zzz'
           : pose === 'sit' ? '安靜地坐著'
@@ -263,6 +366,17 @@ export function App() {
   const layout = walking || act ? 'idle' : pose;
   const catState = walker.catMoving ? 'walk' : catAct ?? (pose === 'sleep' ? 'sleep' : catPose);
   const catHidden = act === 'petCat';
+  const scale = settings.eliseSize;
+  const headHeight = FEET_HEIGHT + (HEAD_HEIGHT[layout] - FEET_HEIGHT) * scale;
+  const stageStyle = {
+    width: STAGE_WIDTH,
+    '--elise-scale': scale,
+    '--cat-scale': settings.catSize,
+  } as CSSProperties;
+  const bubbleStyle: CSSProperties = {
+    bottom: headHeight + 18,
+    left: layout === 'sleep' ? STAGE_WIDTH / 2 - 30 * scale : STAGE_WIDTH / 2,
+  };
 
   return (
     <main
@@ -271,7 +385,7 @@ export function App() {
         if (!(event.target as Element).closest('.pet-menu')) setMenu(false);
       }}
     >
-      <div className="stage" ref={stageRef} style={{ width: STAGE_WIDTH }}>
+      <div className="stage" ref={stageRef} style={stageStyle}>
         {chatOpen && (
           <ChatPanel
             messages={messages}
@@ -283,9 +397,9 @@ export function App() {
         )}
 
         {bubble && !chatOpen && !menu && (
-          <div className={`bubble layout-${layout}`} key={bubble.id} role="status">
-            {bubble.icon && <Icon name={bubble.icon} size={18} />}
-            <span>{bubble.text}</span>
+          <div className={`bubble ${bubble.text ? '' : 'emote'}`} key={bubble.id} role="status" style={bubbleStyle}>
+            {bubble.icon && <Icon name={bubble.icon} size={bubble.text ? 18 : 24} />}
+            {bubble.text && <span>{bubble.text}</span>}
           </div>
         )}
 
@@ -298,7 +412,7 @@ export function App() {
               title="點一下戳戳 Elise · 按住拖動 · 右鍵開啟選單"
               aria-label="Elise：點擊互動，按住拖動，右鍵開啟選單"
             >
-              {walking && !turning ? (
+              {striding ? (
                 <span className="walk-sprite" aria-hidden="true" ref={walker.spriteRef} />
               ) : (
                 <img key={eliseImage} src={eliseImage} alt="Elise Q 版角色" draggable={false} />
@@ -332,10 +446,13 @@ export function App() {
 
         {menu && (
           <PetMenu
-            bottom={HEAD_HEIGHT[layout] + 12}
+            bottom={headHeight + 12}
             status={status}
             mood={mood}
             sections={sections}
+            settings={settings}
+            onSettings={updateSettings}
+            onResetSettings={resetSettings}
             onClose={() => setMenu(false)}
             onExit={choose(() => { void getCurrentWindow().close(); })}
           />
