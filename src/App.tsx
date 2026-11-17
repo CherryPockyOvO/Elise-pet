@@ -83,7 +83,7 @@ export function App() {
   function toggleCompanionMode() {
     const next: CompanionMode = companionMode === 'cat' ? 'costume' : 'cat';
     setCompanionMode(next);
-    setPose('idle'); // Option C currently has only a registered front idle artwork.
+    setPose('idle');
     setCatPose('sit');
     setMessages(previous => [
       ...previous,
@@ -127,7 +127,7 @@ export function App() {
           aria-label="Elise：左鍵拖動，右鍵開啟選單"
         >
           {companionMode === 'costume' ? (
-            <OptionCCharacter />
+            <OptionCCharacter pose={pose} />
           ) : (
             <img src={eliseImages[pose]} alt="Elise Q 版角色" draggable={false} />
           )}
@@ -167,16 +167,12 @@ export function App() {
           </button>
           <button
             role="menuitem"
-            disabled={companionMode === 'costume'}
-            title={companionMode === 'costume' ? '方案 C 的坐姿分層素材尚未完成' : undefined}
             onClick={() => withMenuClosed(() => setPose(current => current === 'sit' ? 'idle' : 'sit'))}
           >
             <span>🌸</span> {pose === 'sit' ? '站起來' : '坐下'}
           </button>
           <button
             role="menuitem"
-            disabled={companionMode === 'costume'}
-            title={companionMode === 'costume' ? '方案 C 的睡姿分層素材尚未完成' : undefined}
             onClick={() => withMenuClosed(toggleSleep)}
           >
             <span>🌙</span> {pose === 'sleep' ? '醒來' : '睡覺'}

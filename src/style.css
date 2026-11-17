@@ -19,44 +19,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid #8195d4; outline-
 .character > img:first-child, .cat > img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; user-select: none; -webkit-user-drag: none; filter: drop-shadow(0 5px 5px #58637e26); }
 .zzz { position: absolute; right: 28px; top: 35px; color: #8298d0; font-size: 24px; line-height: 1; pointer-events: none; }
 
-/* Option C: all source-generated PNG parts have identical 1024x1536
-   coordinates. They must overlap at x:0/y:0 without per-part scaling. */
-.elise-shell.mode-costume {
-  left: 7px;
-  bottom: 2px;
-  width: 292px;
-  height: 424px;
-}
-.option-c-stack {
-  position: absolute;
-  display: block;
-  width: 100%;
-  height: 100%;
-  inset: 0;
-  pointer-events: none;
-  overflow: visible;
-}
-.option-c-layer {
-  position: absolute;
-  display: block;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  user-select: none;
-  pointer-events: none;
-  -webkit-user-drag: none;
-}
-.option-c-fallback {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  pointer-events: none;
-}
-.pet-menu button:disabled { opacity: .42; cursor: not-allowed; }
-.pet-menu button:disabled:hover { background: transparent; }
-
+/* Normal and Option C idle sprites share a 512x512 canvas and ground line. */
 .cat { right: 8px; bottom: 4px; width: 140px; height: 163px; transform-origin: 50% 100%; }
 .cat.happy { animation: hop .4s ease-in-out 2; }
 .cat.sleep, .cat.stretch { width: 165px; height: 155px; right: 0; }
