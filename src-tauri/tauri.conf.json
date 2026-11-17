@@ -1,0 +1,9 @@
+{
+  "$schema":"https://schema.tauri.app/config/2",
+  "productName":"Elise Pet",
+  "version":"0.1.0",
+  "identifier":"dev.elise.pet",
+  "build":{"beforeDevCommand":"npm run dev","devUrl":"http://127.0.0.1:1420","beforeBuildCommand":"npm run build","frontendDist":"../dist"},
+  "app":{"windows":[{"label":"main","title":"Elise Pet","width":420,"height":450,"resizable":false,"decorations":false,"transparent":true,"alwaysOnTop":true,"skipTaskbar":false,"backgroundColor":"#00000000"}],"security":{"csp":null}},
+  "bundle":{"active":false}
+}
