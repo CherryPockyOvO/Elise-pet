@@ -1,0 +1,137 @@
+import { useEffect } from 'react';
+import { isTauri } from '@tauri-apps/api/core';
+import { cursorPosition, getCurrentWindow } from '@tauri-apps/api/window';
+
+/**
+ * The pet window is a transparent rectangle. Without this hook it swallows
+ * every click over its empty area, so the desktop underneath is unusable.
+ *
+ * We poll the global cursor and hit-test the page ourselves: when the cursor
+ * is over a visible pixel of Elise/the cat or over a panel, the window takes
+ * mouse input; otherwise it lets clicks fall through to whatever is below.
+ */
+const POLL_MS = 60;
+/** Elements that are always clickable when the cursor is over their box. */
+const SOLID = '.pet-menu, .chat, .bubble';
+
+const alphaCache = new Map<string, ImageData | null>();
+
+function alphaData(source: string): ImageData | null | undefined {
+  if (alphaCache.has(source)) return alphaCache.get(source);
+  alphaCache.set(source, null);
+  const image = new Image();
+  image.onload = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) return;
+    context.drawImage(image, 0, 0);
+    alphaCache.set(source, context.getImageData(0, 0, canvas.width, canvas.height));
+  };
+  image.src = source;
+  return undefined;
+}
+
+/** Alpha around (u, v) in image pixels, with a few pixels of slack for thin edges. */
+function opaqueNear(data: ImageData, u: number, v: number, radius: number) {
+  for (let dy = -radius; dy <= radius; dy += radius || 1) {
+    for (let dx = -radius; dx <= radius; dx += radius || 1) {
+      const x = Math.round(u + dx);
+      const y = Math.round(v + dy);
+      if (x < 0 || y < 0 || x >= data.width || y >= data.height) continue;
+      if (data.data[(y * data.width + x) * 4 + 3] > 24) return true;
+    }
+  }
+  return false;
+}
+
+function hitImage(image: HTMLImageElement, x: number, y: number) {
+  const data = alphaData(image.currentSrc || image.src);
+  if (!data) return true; // not decoded yet: be generous
+  const box = image.getBoundingClientRect();
+  const scale = Math.min(box.width / data.width, box.height / data.height);
+  const left = box.left + (box.width - data.width * scale) / 2;
+  const top = box.top + (box.height - data.height * scale) / 2;
+  let u = (x - left) / scale;
+  if (getComputedStyle(image).transform.startsWith('matrix(-1')) u = data.width - u;
+  return opaqueNear(data, u, (y - top) / scale, 6);
+}
+
+function hitSprite(sprite: HTMLElement, x: number, y: number) {
+  const url = /url\("?([^")]+)"?\)/.exec(getComputedStyle(sprite).backgroundImage)?.[1];
+  const data = url ? alphaData(url) : undefined;
+  if (!data) return true;
+  const box = sprite.getBoundingClientRect();
+  const cell = data.width / 4;
+  const [px, py] = sprite.style.backgroundPosition.split(' ').map(value => parseFloat(value) || 0);
+  const column = Math.round(px / (100 / 3));
+  const row = Math.round(py / 100);
+  let u = (x - box.left) / box.width * cell;
+  if (sprite.style.transform.includes('scaleX(-1)')) u = cell - u;
+  const v = (y - box.top) / box.height * cell;
+  return opaqueNear(data, column * cell + Math.min(cell - 1, Math.max(0, u)), row * cell + v, 6);
+}
+
+export function isInteractiveAt(x: number, y: number) {
+  const element = document.elementFromPoint(x, y);
+  if (!element) return false;
+  if (element.closest(SOLID)) return true;
+  const pet = element.closest('.character, .cat');
+  if (!pet) return false;
+  const sprite = pet.querySelector<HTMLElement>('.walk-sprite');
+  if (sprite) return hitSprite(sprite, x, y);
+  const image = pet.querySelector('img');
+  return image ? hitImage(image, x, y) : true;
+}
+
+export function useClickThrough() {
+  useEffect(() => {
+    if (!isTauri()) return;
+    const win = getCurrentWindow();
+    let ignoring: boolean | null = null;
+    let buttonsDown = false;
+    let busy = false;
+    let disposed = false;
+
+    const onDown = () => { buttonsDown = true; };
+    const onUp = () => { buttonsDown = false; };
+    window.addEventListener('mousedown', onDown, true);
+    window.addEventListener('mouseup', onUp, true);
+    window.addEventListener('blur', onUp);
+
+    const poll = async () => {
+      if (busy || disposed) return;
+      busy = true;
+      try {
+        const [cursor, inner, scale] = await Promise.all([
+          cursorPosition(), win.innerPosition(), win.scaleFactor(),
+        ]);
+        const x = (cursor.x - inner.x) / scale;
+        const y = (cursor.y - inner.y) / scale;
+        const inside = x >= 0 && y >= 0 && x < window.innerWidth && y < window.innerHeight;
+        // Never switch to pass-through mid-press (e.g. while typing selection or dragging).
+        const ignore = !buttonsDown && !(inside && isInteractiveAt(x, y));
+        if (ignore !== ignoring && !disposed) {
+          ignoring = ignore;
+          await win.setIgnoreCursorEvents(ignore);
+        }
+      } catch {
+        // Window is closing or the API is unavailable; try again next tick.
+      } finally {
+        busy = false;
+      }
+    };
+
+    const timer = window.setInterval(() => { void poll(); }, POLL_MS);
+    void poll();
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      window.removeEventListener('mousedown', onDown, true);
+      window.removeEventListener('mouseup', onUp, true);
+      window.removeEventListener('blur', onUp);
+      void win.setIgnoreCursorEvents(false).catch(() => undefined);
+    };
+  }, []);
+}

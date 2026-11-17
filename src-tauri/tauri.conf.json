@@ -10,12 +10,13 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
         "title": "Elise Pet",
         "width": 420,
-        "height": 450,
+        "height": 640,
         "resizable": false,
         "decorations": false,
         "shadow": false,
