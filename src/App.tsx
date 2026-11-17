@@ -118,7 +118,13 @@ export function App() {
     >
       <div className={`elise-shell mode-${companionMode} pose-${pose}`}>
         {companionMode === 'costume' && (
-          <div className="cat-tail" aria-hidden="true" />
+          <img
+            className="costume-tail"
+            src="/assets/costume/option-c/tail.svg"
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+          />
         )}
         <button
           className={`character ${pose}`}
@@ -129,11 +135,16 @@ export function App() {
         >
           <img src={eliseImages[pose]} alt="Elise Q 版角色" draggable={false} />
           {companionMode === 'costume' && (
-            <span className="cat-hood" aria-hidden="true">
-              <i className="cat-ear ear-left" />
-              <i className="cat-ear ear-right" />
-              <i className="cat-hood-band" />
-            </span>
+            <>
+              <img className="costume-hood" src="/assets/costume/option-c/hood.svg" alt="" aria-hidden="true" draggable={false} />
+              {pose !== 'sleep' && (
+                <>
+                  <img className="costume-paw paw-left" src="/assets/costume/option-c/paw-cuff.svg" alt="" aria-hidden="true" draggable={false} />
+                  <img className="costume-paw paw-right" src="/assets/costume/option-c/paw-cuff.svg" alt="" aria-hidden="true" draggable={false} />
+                </>
+              )}
+              <span className="costume-sparkles" aria-hidden="true">✧</span>
+            </>
           )}
           {pose === 'sleep' && <span className="zzz">Zzz</span>}
         </button>
