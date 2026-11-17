@@ -8,18 +8,34 @@ html, body, #root { width: 100%; height: 100%; margin: 0; background: transparen
 button { cursor: pointer; font: inherit; }
 button:focus-visible, input:focus-visible { outline: 2px solid #8195d4; outline-offset: 2px; }
 .desktop { width: 100%; height: 100%; position: relative; background: transparent; overflow: hidden; }
+
+/* Elise is stationary between user interactions. The old endless bobbing was removed. */
+.elise-shell { position: absolute; left: 15px; bottom: 2px; width: 290px; height: 360px; }
+.elise-shell.pose-sit { left: 15px; width: 290px; height: 350px; }
+.elise-shell.pose-sleep { left: 4px; bottom: 10px; width: 355px; height: 220px; }
 .character, .cat { position: absolute; display: block; padding: 0; margin: 0; border: 0; background: transparent; appearance: none; line-height: 0; -webkit-tap-highlight-color: transparent; }
-.character { left: 15px; bottom: 2px; width: 290px; height: 360px; transform-origin: 50% 100%; animation: breathe 3.1s ease-in-out infinite; cursor: grab; }
+.character { left: 0; bottom: 0; width: 100%; height: 100%; cursor: grab; z-index: 1; }
 .character:active { cursor: grabbing; }
 .character img, .cat img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; user-select: none; -webkit-user-drag: none; filter: drop-shadow(0 5px 5px #58637e26); }
-.character.sit { left: 15px; width: 290px; height: 350px; }
-.character.sleep { left: 4px; bottom: 10px; width: 355px; height: 220px; animation: none; }
 .zzz { position: absolute; right: 28px; top: 35px; color: #8298d0; font-size: 24px; line-height: 1; pointer-events: none; }
+
+/* Temporary CSS-only costume silhouette. Replace with properly layered original art. */
+.cat-hood { position: absolute; left: 80px; top: 24px; width: 133px; height: 70px; pointer-events: none; z-index: 2; }
+.cat-hood-band { position: absolute; left: 7px; top: 30px; width: 118px; height: 31px; background: #66656b; border: 3px solid #47464b; border-bottom: 0; border-radius: 80% 80% 6% 6%; opacity: .96; }
+.cat-ear { position: absolute; top: 0; display: block; width: 43px; height: 54px; background: #75747a; border: 3px solid #48474d; border-radius: 12% 90% 12% 10%; transform: rotate(-14deg) skewY(-6deg); z-index: 1; }
+.cat-ear::after { content: ""; position: absolute; left: 10px; top: 10px; width: 20px; height: 32px; background: #e1a9b3; border-radius: 15% 90% 12% 10%; opacity: .9; }
+.ear-left { left: 9px; }
+.ear-right { right: 9px; transform: scaleX(-1) rotate(-14deg) skewY(-6deg); }
+.cat-tail { position: absolute; z-index: 0; right: 14px; bottom: 70px; width: 66px; height: 94px; border-top: 15px solid #747379; border-right: 17px solid #747379; border-radius: 15px 62px 62px 0; transform: rotate(22deg); filter: drop-shadow(0 2px 2px #50505a50); pointer-events: none; }
+.pose-sit .cat-hood { top: 15px; }
+.pose-sleep .cat-hood { left: 68px; top: 18px; transform: scale(.75) rotate(-10deg); transform-origin: 0 0; }
+.pose-sleep .cat-tail { bottom: 8px; right: 20px; transform: rotate(72deg) scale(.7); }
+
 .cat { right: 8px; bottom: 4px; width: 140px; height: 163px; transform-origin: 50% 100%; }
 .cat.happy { animation: hop .4s ease-in-out 2; }
 .cat.sleep, .cat.stretch { width: 165px; height: 155px; right: 0; }
 
-.pet-menu { position: absolute; z-index: 10; width: 172px; padding: 6px; background: #fafafff5; color: #424e67; border: 1px solid #d8def0; border-radius: 13px; box-shadow: 0 9px 24px #53627a35; backdrop-filter: blur(12px); }
+.pet-menu { position: absolute; z-index: 10; width: 178px; padding: 6px; background: #fafafff5; color: #424e67; border: 1px solid #d8def0; border-radius: 13px; box-shadow: 0 9px 24px #53627a35; backdrop-filter: blur(12px); }
 .menu-title { font-weight: 700; font-size: 13px; padding: 7px 10px; color: #788bbd; }
 .pet-menu button { display: flex; gap: 10px; align-items: center; width: 100%; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; text-align: left; color: #45516b; font-size: 13px; }
 .pet-menu button:hover { background: #e7ebfa; }
@@ -36,6 +52,5 @@ button:focus-visible, input:focus-visible { outline: 2px solid #8195d4; outline-
 .chat form { display: flex; gap: 5px; padding: 8px; }
 .chat input { flex: 1; min-width: 0; border: 1px solid #cbd3ea; border-radius: 9px; padding: 8px; }
 .chat form button { color: #fff; background: #7d91cd; border: 0; border-radius: 9px; padding: 7px 11px; }
-@keyframes breathe { 50% { transform: translateY(-5px) scale(1.01); } }
 @keyframes hop { 50% { transform: translateY(-12px); } }
-@media (prefers-reduced-motion: reduce) { .character, .cat { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .cat { animation: none !important; } }
