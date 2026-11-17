@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent, type MouseEvent } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { OptionCCharacter } from './components/OptionCCharacter';
 
 type Message = { from: 'elise' | 'you'; text: string };
 type ElisePose = 'idle' | 'sit' | 'sleep';
@@ -82,6 +83,7 @@ export function App() {
   function toggleCompanionMode() {
     const next: CompanionMode = companionMode === 'cat' ? 'costume' : 'cat';
     setCompanionMode(next);
+    setPose('idle'); // Option C currently has only a registered front idle artwork.
     setCatPose('sit');
     setMessages(previous => [
       ...previous,
@@ -117,15 +119,6 @@ export function App() {
       }}
     >
       <div className={`elise-shell mode-${companionMode} pose-${pose}`}>
-        {companionMode === 'costume' && (
-          <img
-            className="costume-tail"
-            src="/assets/costume/option-c/tail.svg"
-            alt=""
-            aria-hidden="true"
-            draggable={false}
-          />
-        )}
         <button
           className={`character ${pose}`}
           onMouseDown={dragElise}
@@ -133,20 +126,12 @@ export function App() {
           title="左鍵拖動 Elise · 右鍵開啟選單"
           aria-label="Elise：左鍵拖動，右鍵開啟選單"
         >
-          <img src={eliseImages[pose]} alt="Elise Q 版角色" draggable={false} />
-          {companionMode === 'costume' && (
-            <>
-              <img className="costume-hood" src="/assets/costume/option-c/hood.svg" alt="" aria-hidden="true" draggable={false} />
-              {pose !== 'sleep' && (
-                <>
-                  <img className="costume-paw paw-left" src="/assets/costume/option-c/paw-cuff.svg" alt="" aria-hidden="true" draggable={false} />
-                  <img className="costume-paw paw-right" src="/assets/costume/option-c/paw-cuff.svg" alt="" aria-hidden="true" draggable={false} />
-                </>
-              )}
-              <span className="costume-sparkles" aria-hidden="true">✧</span>
-            </>
+          {companionMode === 'costume' ? (
+            <OptionCCharacter />
+          ) : (
+            <img src={eliseImages[pose]} alt="Elise Q 版角色" draggable={false} />
           )}
-          {pose === 'sleep' && <span className="zzz">Zzz</span>}
+          {companionMode === 'cat' && pose === 'sleep' && <span className="zzz">Zzz</span>}
         </button>
       </div>
 
@@ -180,10 +165,20 @@ export function App() {
           <button role="menuitem" onClick={() => withMenuClosed(toggleCompanionMode)}>
             <span>🐱</span> {companionMode === 'cat' ? '變身貓娘' : '解除貓咪套裝'}
           </button>
-          <button role="menuitem" onClick={() => withMenuClosed(() => setPose(current => current === 'sit' ? 'idle' : 'sit'))}>
+          <button
+            role="menuitem"
+            disabled={companionMode === 'costume'}
+            title={companionMode === 'costume' ? '方案 C 的坐姿分層素材尚未完成' : undefined}
+            onClick={() => withMenuClosed(() => setPose(current => current === 'sit' ? 'idle' : 'sit'))}
+          >
             <span>🌸</span> {pose === 'sit' ? '站起來' : '坐下'}
           </button>
-          <button role="menuitem" onClick={() => withMenuClosed(toggleSleep)}>
+          <button
+            role="menuitem"
+            disabled={companionMode === 'costume'}
+            title={companionMode === 'costume' ? '方案 C 的睡姿分層素材尚未完成' : undefined}
+            onClick={() => withMenuClosed(toggleSleep)}
+          >
             <span>🌙</span> {pose === 'sleep' ? '醒來' : '睡覺'}
           </button>
           <div className="menu-divider" />
