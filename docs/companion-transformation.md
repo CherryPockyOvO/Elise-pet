@@ -50,3 +50,15 @@ Export suggested size: transparent RGBA PNG frames in 512×512 canvas for full-b
 - Right click always opens the menu, left button drags, cat cannot be clicked while equipped.
 - No reappearing second cat while the costume is active.
 - The costume follows Elise's idle, sit, and sleep positions.
+
+
+## Option C selected — implementation update
+
+The approved direction is **Option C**: gray-and-white sleepy cat mini-hood, pink-lined cat ears, fluffy cream edging, pink paw cuffs, and a gray-white tail with a dark bow and small golden bell. Elise retains her original long black hair, gray sweater, pleated skirt, black ribbon, socks, and shoes.
+
+- `public/assets/costume/option-c/hood.svg`: redrawable vector mockup of the soft cat sleeping-cap with paw brooch and pompom.
+- `public/assets/costume/option-c/tail.svg`: gray-white plush tail with ribbon and bell.
+- `public/assets/costume/option-c/paw-cuff.svg`: pale pink paw-pad sleeve overlay.
+- `src/App.tsx` and `src/style.css`: position these assets over the existing normal-form PNG poses and hide the independent cat while equipped.
+
+**Art production caveat:** these are enhanced vector stand-ins, not extracted illustration layers from the selected concept sheet; their registration/alignment must be tested on actual Windows and macOS desktop windows. Create genuine hand-drawn pose-specific, alpha-transparent costume layers for production. No full transformation frame sequence is included yet.
