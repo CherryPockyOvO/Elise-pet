@@ -9,7 +9,7 @@ src-tauri/gen/
 *.log
 
 # Local art references and retired Option C generation helpers
-Elise/
+/Elise/
 optionC-layers-preview.jpg
 scripts/
 tools/

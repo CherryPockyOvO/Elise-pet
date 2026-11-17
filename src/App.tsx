@@ -17,6 +17,18 @@ const catImages: Record<CatPose, string> = {
   sleep: '/assets/cat/poses/sleep.png',
   stretch: '/assets/cat/poses/stretch.png',
 };
+const eliseWalkImages = [
+  '/assets/elise/poses/walk_side_01.png',
+  '/assets/elise/poses/walk_side_03.png',
+  '/assets/elise/poses/walk_side_02.png',
+  '/assets/elise/poses/walk_side_04.png',
+];
+const catWalkImages = [
+  '/assets/cat/poses/walk_01.png',
+  '/assets/cat/poses/walk_02.png',
+  '/assets/cat/poses/walk_02.png',
+  '/assets/cat/poses/walk_01.png',
+];
 
 export function App() {
   const [chatOpen, setChatOpen] = useState(false);
@@ -44,9 +56,9 @@ export function App() {
     if (!walking) return;
 
     const timer = window.setInterval(() => {
-      setWalkFrame(current => (current + 1) % 2);
+      setWalkFrame(current => (current + 1) % eliseWalkImages.length);
       setWalkOffset(current => {
-        const next = current + walkDirection * 7;
+        const next = current + walkDirection * 5;
         if (next >= 92) {
           setWalkDirection(-1);
           return 92;
@@ -57,7 +69,7 @@ export function App() {
         }
         return next;
       });
-    }, 160);
+    }, 300);
 
     return () => window.clearInterval(timer);
   }, [walking, walkDirection]);
@@ -149,7 +161,7 @@ export function App() {
             aria-label="Elise：左鍵拖動，右鍵開啟選單"
           >
             <img
-              src={walking ? `/assets/elise/poses/walk_side_0${walkFrame + 1}.png` : eliseImages[pose]}
+              src={walking ? eliseWalkImages[walkFrame] : eliseImages[pose]}
               alt="Elise Q 版角色"
               draggable={false}
             />
@@ -169,7 +181,7 @@ export function App() {
           aria-label="灰白貓咪"
         >
           <img
-            src={walking ? `/assets/cat/poses/walk_0${walkFrame + 1}.png` : catImages[catPose]}
+            src={walking ? catWalkImages[walkFrame] : catImages[catPose]}
             alt="灰白貓咪"
             draggable={false}
           />
