@@ -18,16 +18,24 @@ const catImages: Record<CatPose, string> = {
   stretch: '/assets/cat/poses/stretch.png',
 };
 const eliseWalkImages = [
-  // Near-leg contact -> near-leg passing -> far-leg contact -> far-leg passing.
+  // Near leg: contact/down/pass/up; far leg: contact/down/pass/up.
   '/assets/elise/poses/walk_side_01.png',
   '/assets/elise/poses/walk_side_02.png',
   '/assets/elise/poses/walk_side_03.png',
   '/assets/elise/poses/walk_side_04.png',
+  '/assets/elise/poses/walk_side_05.png',
+  '/assets/elise/poses/walk_side_06.png',
+  '/assets/elise/poses/walk_side_07.png',
+  '/assets/elise/poses/walk_side_08.png',
 ];
 const catWalkImages = [
   '/assets/cat/poses/walk_01.png',
+  '/assets/cat/poses/walk_01.png',
   '/assets/cat/poses/walk_02.png',
   '/assets/cat/poses/walk_02.png',
+  '/assets/cat/poses/walk_02.png',
+  '/assets/cat/poses/walk_02.png',
+  '/assets/cat/poses/walk_01.png',
   '/assets/cat/poses/walk_01.png',
 ];
 
@@ -59,7 +67,7 @@ export function App() {
     const timer = window.setInterval(() => {
       setWalkFrame(current => (current + 1) % eliseWalkImages.length);
       setWalkOffset(current => {
-        const next = current + walkDirection * 5;
+        const next = current + walkDirection * 4;
         if (next >= 92) {
           setWalkDirection(-1);
           return 92;
@@ -70,7 +78,7 @@ export function App() {
         }
         return next;
       });
-    }, 300);
+    }, 220);
 
     return () => window.clearInterval(timer);
   }, [walking, walkDirection]);

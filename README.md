@@ -8,7 +8,7 @@ Elise-pet 是基于 Tauri 2、React 19 和 TypeScript 的透明桌面宠物。
 - 左键拖动 Elise，右键打开菜单
 - Elise 与独立小猫始终一起显示，小猫固定在人物脚边
 - 原版站立、坐下、睡觉与侧面走路完整 PNG
-- Elise 使用四帧完整 PNG、小猫使用双帧完整 PNG，同步在窗口内往返散步
+- Elise 使用八帧完整 PNG（双脚各四个步态阶段），小猫使用双帧完整 PNG，同步在窗口内往返散步
 - 本地聊天界面（AI API 尚未接入）
 
 运行时只切换 `public/assets/elise/poses/` 与 `public/assets/cat/poses/` 中的完整 PNG，不拼接角色部件。所有动作帧使用 512×512 透明画布。
