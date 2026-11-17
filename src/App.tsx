@@ -80,20 +80,18 @@ export function App() {
   }
 
   function toggleCompanionMode() {
-    setCompanionMode(previous => {
-      const next = previous === 'cat' ? 'costume' : 'cat';
-      setCatPose('sit');
-      setMessages(messages => [
-        ...messages,
-        {
-          from: 'elise',
-          text: next === 'costume'
-            ? '小貓變成我的貓耳帽和尾巴啦……喵？'
-            : '貓咪回來了！又可以摸摸牠了。🐾',
-        },
-      ]);
-      return next;
-    });
+    const next: CompanionMode = companionMode === 'cat' ? 'costume' : 'cat';
+    setCompanionMode(next);
+    setCatPose('sit');
+    setMessages(previous => [
+      ...previous,
+      {
+        from: 'elise',
+        text: next === 'costume'
+          ? '小貓變成我的貓耳帽和尾巴啦……喵？'
+          : '貓咪回來了！又可以摸摸牠了。🐾',
+      },
+    ]);
   }
 
   function toggleSleep() {
