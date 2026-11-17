@@ -1,8 +1,15 @@
 node_modules/
 dist/
 src-tauri/target/
+src-tauri/gen/
 .env
 .env.*
 !.env.example
 .DS_Store
 *.log
+
+# Local art references and retired Option C generation helpers
+Elise/
+optionC-layers-preview.jpg
+scripts/
+tools/

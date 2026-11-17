@@ -1,11 +1,9 @@
 import { useEffect, useState, type FormEvent, type MouseEvent } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { OptionCCharacter } from './components/OptionCCharacter';
 
 type Message = { from: 'elise' | 'you'; text: string };
 type ElisePose = 'idle' | 'sit' | 'sleep';
 type CatPose = 'sit' | 'happy' | 'sleep' | 'stretch';
-type CompanionMode = 'cat' | 'costume';
 type MenuPosition = { x: number; y: number };
 
 const eliseImages: Record<ElisePose, string> = {
@@ -28,7 +26,10 @@ export function App() {
   const [input, setInput] = useState('');
   const [pose, setPose] = useState<ElisePose>('idle');
   const [catPose, setCatPose] = useState<CatPose>('sit');
-  const [companionMode, setCompanionMode] = useState<CompanionMode>('cat');
+  const [walking, setWalking] = useState(false);
+  const [walkFrame, setWalkFrame] = useState(0);
+  const [walkOffset, setWalkOffset] = useState(0);
+  const [walkDirection, setWalkDirection] = useState<1 | -1>(1);
   const [menu, setMenu] = useState<MenuPosition | null>(null);
 
   useEffect(() => {
@@ -38,6 +39,28 @@ export function App() {
     window.addEventListener('keydown', onEscape);
     return () => window.removeEventListener('keydown', onEscape);
   }, []);
+
+  useEffect(() => {
+    if (!walking) return;
+
+    const timer = window.setInterval(() => {
+      setWalkFrame(current => (current + 1) % 2);
+      setWalkOffset(current => {
+        const next = current + walkDirection * 7;
+        if (next >= 92) {
+          setWalkDirection(-1);
+          return 92;
+        }
+        if (next <= 0) {
+          setWalkDirection(1);
+          return 0;
+        }
+        return next;
+      });
+    }, 160);
+
+    return () => window.clearInterval(timer);
+  }, [walking, walkDirection]);
 
   function send(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -65,7 +88,7 @@ export function App() {
   function openMenu(event: MouseEvent<HTMLButtonElement>) {
     event.preventDefault();
     event.stopPropagation();
-    const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
+    const bounds = event.currentTarget.closest('.desktop')?.getBoundingClientRect();
     if (!bounds) return;
     const menuWidth = 178;
     const menuHeight = 260;
@@ -80,26 +103,21 @@ export function App() {
     action();
   }
 
-  function toggleCompanionMode() {
-    const next: CompanionMode = companionMode === 'cat' ? 'costume' : 'cat';
-    setCompanionMode(next);
+  function toggleWalking() {
+    const next = !walking;
+    setWalking(next);
     setPose('idle');
     setCatPose('sit');
-    setMessages(previous => [
-      ...previous,
-      {
-        from: 'elise',
-        text: next === 'costume'
-          ? '小貓變成我的貓耳帽和尾巴啦……喵？'
-          : '貓咪回來了！又可以摸摸牠了。🐾',
-      },
-    ]);
+    setWalkFrame(0);
   }
 
   function toggleSleep() {
+    setWalking(false);
+    setWalkOffset(0);
+    setWalkDirection(1);
     const sleeping = pose !== 'sleep';
     setPose(sleeping ? 'sleep' : 'idle');
-    if (companionMode === 'cat') setCatPose(sleeping ? 'sleep' : 'sit');
+    setCatPose(sleeping ? 'sleep' : 'sit');
   }
 
   function petCat() {
@@ -118,37 +136,45 @@ export function App() {
         if (!(event.target as Element).closest('.pet-menu')) setMenu(null);
       }}
     >
-      <div className={`elise-shell mode-${companionMode} pose-${pose}`}>
-        <button
-          className={`character ${pose}`}
-          onMouseDown={dragElise}
-          onContextMenu={openMenu}
-          title="左鍵拖動 Elise · 右鍵開啟選單"
-          aria-label="Elise：左鍵拖動，右鍵開啟選單"
-        >
-          {companionMode === 'costume' ? (
-            <OptionCCharacter pose={pose} />
-          ) : (
-            <img src={eliseImages[pose]} alt="Elise Q 版角色" draggable={false} />
-          )}
-          {companionMode === 'cat' && pose === 'sleep' && <span className="zzz">Zzz</span>}
-        </button>
-      </div>
+      <div
+        className={`pet-group pose-${pose} ${walking ? 'walking' : ''} ${walking && walkDirection < 0 ? 'facing-left' : ''}`}
+        style={{ left: 8 + walkOffset }}
+      >
+        <div className="elise-shell">
+          <button
+            className={`character ${walking ? 'walk' : pose}`}
+            onMouseDown={dragElise}
+            onContextMenu={openMenu}
+            title="左鍵拖動 Elise · 右鍵開啟選單"
+            aria-label="Elise：左鍵拖動，右鍵開啟選單"
+          >
+            <img
+              src={walking ? `/assets/elise/poses/walk_side_0${walkFrame + 1}.png` : eliseImages[pose]}
+              alt="Elise Q 版角色"
+              draggable={false}
+            />
+            {!walking && pose === 'sleep' && <span className="zzz">Zzz</span>}
+          </button>
+        </div>
 
-      {companionMode === 'cat' && (
         <button
-          className={`cat ${catPose}`}
+          className={`cat ${walking ? 'walk' : catPose}`}
           onClick={petCat}
           onContextMenu={event => {
             event.preventDefault();
+            if (walking) return;
             setCatPose(current => current === 'stretch' ? 'sit' : 'stretch');
           }}
           title="左鍵摸貓，右鍵伸懶腰"
           aria-label="灰白貓咪"
         >
-          <img src={catImages[catPose]} alt="灰白貓咪" draggable={false} />
+          <img
+            src={walking ? `/assets/cat/poses/walk_0${walkFrame + 1}.png` : catImages[catPose]}
+            alt="灰白貓咪"
+            draggable={false}
+          />
         </button>
-      )}
+      </div>
 
       {menu && (
         <div
@@ -162,12 +188,18 @@ export function App() {
           <button role="menuitem" onClick={() => withMenuClosed(() => setChatOpen(true))}>
             <span>💬</span> 開啟聊天
           </button>
-          <button role="menuitem" onClick={() => withMenuClosed(toggleCompanionMode)}>
-            <span>🐱</span> {companionMode === 'cat' ? '變身貓娘' : '解除貓咪套裝'}
+          <button role="menuitem" onClick={() => withMenuClosed(toggleWalking)}>
+            <span>🐾</span> {walking ? '停止散步' : '一起散步'}
           </button>
           <button
             role="menuitem"
-            onClick={() => withMenuClosed(() => setPose(current => current === 'sit' ? 'idle' : 'sit'))}
+            onClick={() => withMenuClosed(() => {
+              setWalking(false);
+              setWalkOffset(0);
+              setWalkDirection(1);
+              setPose(current => current === 'sit' ? 'idle' : 'sit');
+              setCatPose('sit');
+            })}
           >
             <span>🌸</span> {pose === 'sit' ? '站起來' : '坐下'}
           </button>

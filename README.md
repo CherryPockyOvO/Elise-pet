@@ -6,11 +6,20 @@ Elise-pet 是基于 Tauri 2、React 19 和 TypeScript 的透明桌面宠物。
 
 - 透明、无边框、置顶桌面窗口
 - 左键拖动 Elise，右键打开菜单
-- 独立猫咪形态与 Option C 猫娘形态切换
-- 原版和猫娘版的站立、坐下、睡觉完整 PNG
+- Elise 与独立小猫始终一起显示，小猫固定在人物脚边
+- 原版站立、坐下、睡觉与侧面走路完整 PNG
+- Elise 和小猫使用同步双帧行走动画，可在窗口内往返散步
 - 本地聊天界面（AI API 尚未接入）
 
-猫娘形态直接切换 `public/assets/costume/option-c/poses-v2/` 中的完整 PNG，运行时不拼接帽子、袖口或尾巴。所有姿势使用 512×512 透明画布，并与原版对应姿势对齐。站姿保留原版身体像素，确保变身前后的头身比例、腿、肤色、袜子与鞋一致。
+运行时只切换 `public/assets/elise/poses/` 与 `public/assets/cat/poses/` 中的完整 PNG，不拼接角色部件。所有动作帧使用 512×512 透明画布。
+
+## 目录结构
+
+- `src/`：React 交互与界面样式
+- `public/assets/elise/`：Elise 的完整姿势、表情和嘴型 PNG
+- `public/assets/cat/`：小猫的完整姿势和表情 PNG
+- `public/assets/ui/`：界面图标
+- `src-tauri/`：Windows 桌宠窗口与 Tauri 配置
 
 ## 本地运行
 
@@ -39,6 +48,7 @@ cargo check --locked
 
 - 左键按住 Elise：拖动窗口
 - 右键 Elise：打开菜单
+- 菜单「一起散步」：开始或停止 Elise 与小猫的同步行走
 - 左键猫咪：抚摸
 - 右键猫咪：伸懒腰
 
