@@ -19,17 +19,83 @@ button:focus-visible, input:focus-visible { outline: 2px solid #8195d4; outline-
 .character img, .cat img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; user-select: none; -webkit-user-drag: none; filter: drop-shadow(0 5px 5px #58637e26); }
 .zzz { position: absolute; right: 28px; top: 35px; color: #8298d0; font-size: 24px; line-height: 1; pointer-events: none; }
 
-/* Temporary CSS-only costume silhouette. Replace with properly layered original art. */
-.cat-hood { position: absolute; left: 80px; top: 24px; width: 133px; height: 70px; pointer-events: none; z-index: 2; }
-.cat-hood-band { position: absolute; left: 7px; top: 30px; width: 118px; height: 31px; background: #66656b; border: 3px solid #47464b; border-bottom: 0; border-radius: 80% 80% 6% 6%; opacity: .96; }
-.cat-ear { position: absolute; top: 0; display: block; width: 43px; height: 54px; background: #75747a; border: 3px solid #48474d; border-radius: 12% 90% 12% 10%; transform: rotate(-14deg) skewY(-6deg); z-index: 1; }
-.cat-ear::after { content: ""; position: absolute; left: 10px; top: 10px; width: 20px; height: 32px; background: #e1a9b3; border-radius: 15% 90% 12% 10%; opacity: .9; }
-.ear-left { left: 9px; }
-.ear-right { right: 9px; transform: scaleX(-1) rotate(-14deg) skewY(-6deg); }
-.cat-tail { position: absolute; z-index: 0; right: 14px; bottom: 70px; width: 66px; height: 94px; border-top: 15px solid #747379; border-right: 17px solid #747379; border-radius: 15px 62px 62px 0; transform: rotate(22deg); filter: drop-shadow(0 2px 2px #50505a50); pointer-events: none; }
-.pose-sit .cat-hood { top: 15px; }
-.pose-sleep .cat-hood { left: 68px; top: 18px; transform: scale(.75) rotate(-10deg); transform-origin: 0 0; }
-.pose-sleep .cat-tail { bottom: 8px; right: 20px; transform: rotate(72deg) scale(.7); }
+/* Option C art layers: the gray-white cat becomes Elise's sleepy mini-hood,
+   fluffy ribbon-and-bell tail, and soft pink-paw sleeve accessories.
+   These SVG layers are a layout prototype; full pose-specific redraws follow. */
+.costume-tail {
+  position: absolute;
+  z-index: 0;
+  right: -6px;
+  bottom: 62px;
+  width: 113px;
+  height: 154px;
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(0 3px 3px #5b586320);
+  animation: costume-appear .34s ease-out both;
+}
+.costume-hood,
+.costume-paw {
+  position: absolute;
+  display: block;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  filter: drop-shadow(0 2px 2px #5e566525);
+  animation: costume-appear .34s ease-out both;
+}
+.costume-hood {
+  z-index: 2;
+  top: 42px;
+  left: 42px;
+  width: 211px;
+  height: 120px;
+}
+.costume-paw {
+  z-index: 3;
+  width: 44px;
+  height: 46px;
+  bottom: 91px;
+}
+.paw-left { left: 64px; transform: rotate(-12deg); }
+.paw-right { right: 61px; transform: rotate(12deg); }
+.costume-sparkles {
+  position: absolute;
+  z-index: 4;
+  top: 68px;
+  right: 10px;
+  color: #c5a7d6;
+  font-size: 24px;
+  pointer-events: none;
+  animation: sparkle-in .6s ease-out both;
+}
+.pose-sit .costume-hood { top: 34px; left: 41px; }
+.pose-sit .costume-tail { bottom: 28px; right: -2px; width: 119px; transform: rotate(16deg); }
+.pose-sit .costume-paw { bottom: 82px; }
+.pose-sleep .costume-hood {
+  left: 35px;
+  top: 39px;
+  width: 163px;
+  height: 94px;
+  transform: rotate(-13deg);
+}
+.pose-sleep .costume-tail {
+  bottom: 6px;
+  right: 12px;
+  width: 108px;
+  height: 118px;
+  transform: rotate(38deg);
+}
+@keyframes costume-appear {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes sparkle-in {
+  from { opacity: 0; transform: translateY(6px) scale(.75); }
+  40% { opacity: 1; }
+  to { opacity: 0; transform: translateY(-15px) scale(1.1); }
+}
 
 .cat { right: 8px; bottom: 4px; width: 140px; height: 163px; transform-origin: 50% 100%; }
 .cat.happy { animation: hop .4s ease-in-out 2; }
@@ -53,4 +119,4 @@ button:focus-visible, input:focus-visible { outline: 2px solid #8195d4; outline-
 .chat input { flex: 1; min-width: 0; border: 1px solid #cbd3ea; border-radius: 9px; padding: 8px; }
 .chat form button { color: #fff; background: #7d91cd; border: 0; border-radius: 9px; padding: 7px 11px; }
 @keyframes hop { 50% { transform: translateY(-12px); } }
-@media (prefers-reduced-motion: reduce) { .cat { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .cat, .costume-tail, .costume-hood, .costume-paw, .costume-sparkles { animation: none !important; } .costume-sparkles { display: none; } }
