@@ -17,17 +17,8 @@ const catImages: Record<CatPose, string> = {
   sleep: '/assets/cat/poses/sleep.png',
   stretch: '/assets/cat/poses/stretch.png',
 };
-const eliseWalkImages = [
-  // Near leg: contact/down/pass/up; far leg: contact/down/pass/up.
-  '/assets/elise/poses/walk_side_01.png',
-  '/assets/elise/poses/walk_side_02.png',
-  '/assets/elise/poses/walk_side_03.png',
-  '/assets/elise/poses/walk_side_04.png',
-  '/assets/elise/poses/walk_side_05.png',
-  '/assets/elise/poses/walk_side_06.png',
-  '/assets/elise/poses/walk_side_07.png',
-  '/assets/elise/poses/walk_side_08.png',
-];
+const ELISE_WALK_FRAME_COUNT = 8;
+const ELISE_WALK_SHEET = '/assets/elise/poses/walk_side_sheet.png';
 const catWalkImages = [
   '/assets/cat/poses/walk_01.png',
   '/assets/cat/poses/walk_01.png',
@@ -62,10 +53,18 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    [ELISE_WALK_SHEET, '/assets/cat/poses/walk_01.png', '/assets/cat/poses/walk_02.png']
+      .forEach(source => {
+        const image = new Image();
+        image.src = source;
+      });
+  }, []);
+
+  useEffect(() => {
     if (!walking) return;
 
     const timer = window.setInterval(() => {
-      setWalkFrame(current => (current + 1) % eliseWalkImages.length);
+      setWalkFrame(current => (current + 1) % ELISE_WALK_FRAME_COUNT);
       setWalkOffset(current => {
         const next = current + walkDirection * 4;
         if (next >= 92) {
@@ -169,11 +168,17 @@ export function App() {
             title="左鍵拖動 Elise · 右鍵開啟選單"
             aria-label="Elise：左鍵拖動，右鍵開啟選單"
           >
-            <img
-              src={walking ? eliseWalkImages[walkFrame] : eliseImages[pose]}
-              alt="Elise Q 版角色"
-              draggable={false}
-            />
+            {walking ? (
+              <span
+                className="walk-sprite"
+                aria-hidden="true"
+                style={{
+                  backgroundPosition: `${(walkFrame % 4) * (100 / 3)}% ${Math.floor(walkFrame / 4) * 100}%`,
+                }}
+              />
+            ) : (
+              <img src={eliseImages[pose]} alt="Elise Q 版角色" draggable={false} />
+            )}
             {!walking && pose === 'sleep' && <span className="zzz">Zzz</span>}
           </button>
         </div>

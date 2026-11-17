@@ -20,6 +20,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid #8195d4; outline-
 .character { left: 0; bottom: 0; width: 100%; height: 100%; cursor: grab; z-index: 1; }
 .character:active { cursor: grabbing; }
 .character > img:first-child, .cat > img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; user-select: none; -webkit-user-drag: none; filter: drop-shadow(0 5px 5px #58637e26); }
+.walk-sprite { position: absolute; top: 35px; left: 0; width: 100%; height: 290px; background: url('/assets/elise/poses/walk_side_sheet.png') no-repeat; background-size: 400% 200%; pointer-events: none; user-select: none; filter: drop-shadow(0 5px 5px #58637e26); }
 .zzz { position: absolute; right: 28px; top: 35px; color: #8298d0; font-size: 24px; line-height: 1; pointer-events: none; }
 
 .cat { left: 158px; bottom: 1px; width: 140px; height: 163px; transform-origin: 50% 100%; z-index: 2; }
