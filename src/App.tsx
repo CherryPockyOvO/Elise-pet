@@ -18,9 +18,9 @@ const catImages: Record<CatPose, string> = {
   stretch: '/assets/cat/poses/stretch.png',
 };
 const eliseWalkImages = [
-  // Contact -> recoil -> passing -> high point -> contact.
-  '/assets/elise/poses/walk_side_02.png',
+  // Near-leg contact -> near-leg passing -> far-leg contact -> far-leg passing.
   '/assets/elise/poses/walk_side_01.png',
+  '/assets/elise/poses/walk_side_02.png',
   '/assets/elise/poses/walk_side_03.png',
   '/assets/elise/poses/walk_side_04.png',
 ];
