@@ -4,6 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 type Message = { from: 'elise' | 'you'; text: string };
 type ElisePose = 'idle' | 'sit' | 'sleep';
 type CatPose = 'sit' | 'happy' | 'sleep' | 'stretch';
+type CompanionMode = 'cat' | 'costume';
 type MenuPosition = { x: number; y: number };
 
 const eliseImages: Record<ElisePose, string> = {
@@ -11,7 +12,6 @@ const eliseImages: Record<ElisePose, string> = {
   sit: '/assets/elise/poses/sit_shy.png',
   sleep: '/assets/elise/poses/sleep.png',
 };
-
 const catImages: Record<CatPose, string> = {
   sit: '/assets/cat/poses/sit_neutral.png',
   happy: '/assets/cat/poses/sit_happy.png',
@@ -27,6 +27,7 @@ export function App() {
   const [input, setInput] = useState('');
   const [pose, setPose] = useState<ElisePose>('idle');
   const [catPose, setCatPose] = useState<CatPose>('sit');
+  const [companionMode, setCompanionMode] = useState<CompanionMode>('cat');
   const [menu, setMenu] = useState<MenuPosition | null>(null);
 
   useEffect(() => {
@@ -56,7 +57,7 @@ export function App() {
     try {
       await getCurrentWindow().startDragging();
     } catch {
-      // Native window dragging is unavailable in browser-only previews.
+      // Browser-only preview does not support native window dragging.
     }
   }
 
@@ -65,17 +66,40 @@ export function App() {
     event.stopPropagation();
     const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
     if (!bounds) return;
-    const menuWidth = 172;
-    const menuHeight = 218;
+    const menuWidth = 178;
+    const menuHeight = 260;
     setMenu({
       x: Math.max(8, Math.min(event.clientX - bounds.left, bounds.width - menuWidth - 8)),
       y: Math.max(8, Math.min(event.clientY - bounds.top, bounds.height - menuHeight - 8)),
     });
   }
 
-  function closeMenuThen(action: () => void) {
+  function withMenuClosed(action: () => void) {
     setMenu(null);
     action();
+  }
+
+  function toggleCompanionMode() {
+    setCompanionMode(previous => {
+      const next = previous === 'cat' ? 'costume' : 'cat';
+      setCatPose('sit');
+      setMessages(messages => [
+        ...messages,
+        {
+          from: 'elise',
+          text: next === 'costume'
+            ? '小貓變成我的貓耳帽和尾巴啦……喵？'
+            : '貓咪回來了！又可以摸摸牠了。🐾',
+        },
+      ]);
+      return next;
+    });
+  }
+
+  function toggleSleep() {
+    const sleeping = pose !== 'sleep';
+    setPose(sleeping ? 'sleep' : 'idle');
+    if (companionMode === 'cat') setCatPose(sleeping ? 'sleep' : 'sit');
   }
 
   function petCat() {
@@ -94,29 +118,43 @@ export function App() {
         if (!(event.target as Element).closest('.pet-menu')) setMenu(null);
       }}
     >
-      <button
-        className={`character ${pose}`}
-        onMouseDown={dragElise}
-        onContextMenu={openMenu}
-        title="左鍵拖動 Elise · 右鍵開啟選單"
-        aria-label="Elise：左鍵拖動，右鍵開啟選單"
-      >
-        <img src={eliseImages[pose]} alt="Elise Q 版角色" draggable={false} />
-        {pose === 'sleep' && <span className="zzz">Zzz</span>}
-      </button>
+      <div className={`elise-shell mode-${companionMode} pose-${pose}`}>
+        {companionMode === 'costume' && (
+          <div className="cat-tail" aria-hidden="true" />
+        )}
+        <button
+          className={`character ${pose}`}
+          onMouseDown={dragElise}
+          onContextMenu={openMenu}
+          title="左鍵拖動 Elise · 右鍵開啟選單"
+          aria-label="Elise：左鍵拖動，右鍵開啟選單"
+        >
+          <img src={eliseImages[pose]} alt="Elise Q 版角色" draggable={false} />
+          {companionMode === 'costume' && (
+            <span className="cat-hood" aria-hidden="true">
+              <i className="cat-ear ear-left" />
+              <i className="cat-ear ear-right" />
+              <i className="cat-hood-band" />
+            </span>
+          )}
+          {pose === 'sleep' && <span className="zzz">Zzz</span>}
+        </button>
+      </div>
 
-      <button
-        className={`cat ${catPose}`}
-        onClick={petCat}
-        onContextMenu={event => {
-          event.preventDefault();
-          setCatPose(current => current === 'stretch' ? 'sit' : 'stretch');
-        }}
-        title="左鍵摸貓，右鍵伸懶腰"
-        aria-label="灰白貓咪"
-      >
-        <img src={catImages[catPose]} alt="灰白貓咪" draggable={false} />
-      </button>
+      {companionMode === 'cat' && (
+        <button
+          className={`cat ${catPose}`}
+          onClick={petCat}
+          onContextMenu={event => {
+            event.preventDefault();
+            setCatPose(current => current === 'stretch' ? 'sit' : 'stretch');
+          }}
+          title="左鍵摸貓，右鍵伸懶腰"
+          aria-label="灰白貓咪"
+        >
+          <img src={catImages[catPose]} alt="灰白貓咪" draggable={false} />
+        </button>
+      )}
 
       {menu && (
         <div
@@ -127,20 +165,20 @@ export function App() {
           onContextMenu={event => event.preventDefault()}
         >
           <div className="menu-title">Elise ♡</div>
-          <button role="menuitem" onClick={() => closeMenuThen(() => setChatOpen(true))}>
+          <button role="menuitem" onClick={() => withMenuClosed(() => setChatOpen(true))}>
             <span>💬</span> 開啟聊天
           </button>
-          <button role="menuitem" onClick={() => closeMenuThen(() => setPose(current => current === 'sit' ? 'idle' : 'sit'))}>
+          <button role="menuitem" onClick={() => withMenuClosed(toggleCompanionMode)}>
+            <span>🐱</span> {companionMode === 'cat' ? '變身貓娘' : '解除貓咪套裝'}
+          </button>
+          <button role="menuitem" onClick={() => withMenuClosed(() => setPose(current => current === 'sit' ? 'idle' : 'sit'))}>
             <span>🌸</span> {pose === 'sit' ? '站起來' : '坐下'}
           </button>
-          <button role="menuitem" onClick={() => closeMenuThen(() => {
-            setPose(current => current === 'sleep' ? 'idle' : 'sleep');
-            setCatPose(current => current === 'sleep' ? 'sit' : 'sleep');
-          })}>
+          <button role="menuitem" onClick={() => withMenuClosed(toggleSleep)}>
             <span>🌙</span> {pose === 'sleep' ? '醒來' : '睡覺'}
           </button>
           <div className="menu-divider" />
-          <button role="menuitem" className="menu-exit" onClick={() => closeMenuThen(() => { void getCurrentWindow().close(); })}>
+          <button role="menuitem" className="menu-exit" onClick={() => withMenuClosed(() => { void getCurrentWindow().close(); })}>
             <span>×</span> 退出桌寵
           </button>
         </div>
