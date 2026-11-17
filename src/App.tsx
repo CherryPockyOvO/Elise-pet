@@ -1,269 +1,346 @@
-import { useEffect, useState, type FormEvent, type MouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import {
+  CAT_WALK_IMAGES, PRELOAD, catImages, eliseImages,
+  type CatAct, type CatPose, type EliseAct, type ElisePose, type Expression,
+} from './assets';
+import { ChatPanel, type Message } from './ChatPanel';
+import { Icon } from './Icon';
+import { PetMenu, type MenuSection } from './PetMenu';
+import { useClickThrough } from './useClickThrough';
+import { STAGE_WIDTH, useWalker } from './useWalker';
 
-type Message = { from: 'elise' | 'you'; text: string };
-type ElisePose = 'idle' | 'sit' | 'sleep';
-type CatPose = 'sit' | 'happy' | 'sleep' | 'stretch';
-type MenuPosition = { x: number; y: number };
+type Bubble = { id: number; text: string; icon?: string };
 
-const eliseImages: Record<ElisePose, string> = {
-  idle: '/assets/elise/poses/idle_front.png',
-  sit: '/assets/elise/poses/sit_shy.png',
-  sleep: '/assets/elise/poses/sleep.png',
+const DRAG_THRESHOLD = 4;
+/** Height of the top of Elise's head above the stage bottom, per layout. */
+const HEAD_HEIGHT: Record<ElisePose, number> = { idle: 266, sit: 229, sleep: 119 };
+const CAT_TRICK_MS: Record<CatAct, number> = {
+  happy: 900, stretch: 1800, roll: 2600, wave: 1800, surprised: 1200,
 };
-const catImages: Record<CatPose, string> = {
-  sit: '/assets/cat/poses/sit_neutral.png',
-  happy: '/assets/cat/poses/sit_happy.png',
-  sleep: '/assets/cat/poses/sleep.png',
-  stretch: '/assets/cat/poses/stretch.png',
-};
-const ELISE_WALK_FRAME_COUNT = 8;
-const ELISE_WALK_SHEET = '/assets/elise/poses/walk_side_sheet.png';
-const catWalkImages = [
-  '/assets/cat/poses/walk_01.png',
-  '/assets/cat/poses/walk_01.png',
-  '/assets/cat/poses/walk_02.png',
-  '/assets/cat/poses/walk_02.png',
-  '/assets/cat/poses/walk_02.png',
-  '/assets/cat/poses/walk_02.png',
-  '/assets/cat/poses/walk_01.png',
-  '/assets/cat/poses/walk_01.png',
+const POKE_LINES = ['哇！嚇我一跳…', '欸？！怎、怎麼了嗎？', '呀…別突然戳我啦。'];
+const REPLIES = [
+  '嗯嗯，我在聽喔～',
+  '原來是這樣呀。小貓也在旁邊點頭呢。',
+  '我記下來了！不過現在還是本地示範回覆，之後會接上真正的 AI。',
+  '要不要休息一下？我陪你。',
 ];
+
+const pick = <T,>(items: T[]) => items[Math.floor(Math.random() * items.length)];
+let nextId = 1;
 
 export function App() {
   const [chatOpen, setChatOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
-    { from: 'elise', text: '你好，我是 Elise。今天也和小貓一起陪著你。🐾' },
+    { id: nextId++, from: 'elise', text: '你好，我是 Elise。今天也和小貓一起陪著你。' },
   ]);
-  const [input, setInput] = useState('');
+  const [typing, setTyping] = useState(false);
   const [pose, setPose] = useState<ElisePose>('idle');
+  const [act, setAct] = useState<EliseAct | null>(null);
   const [catPose, setCatPose] = useState<CatPose>('sit');
-  const [walking, setWalking] = useState(false);
-  const [walkFrame, setWalkFrame] = useState(0);
-  const [walkOffset, setWalkOffset] = useState(0);
-  const [walkDirection, setWalkDirection] = useState<1 | -1>(1);
-  const [menu, setMenu] = useState<MenuPosition | null>(null);
+  const [catAct, setCatAct] = useState<CatAct | null>(null);
+  const [menu, setMenu] = useState(false);
+  const [bubble, setBubble] = useState<Bubble | null>(null);
+
+  const stageRef = useRef<HTMLDivElement>(null);
+  const spriteRef = useRef<HTMLSpanElement>(null);
+  const catRef = useRef<HTMLButtonElement>(null);
+  const catImageRef = useRef<HTMLImageElement>(null);
+  const timers = useRef<Record<string, number>>({});
+  const walker = useWalker({ stage: stageRef, sprite: spriteRef, cat: catRef, catImage: catImageRef });
+  const walking = walker.phase !== 'off';
+  const turning = walker.phase === 'turn';
+
+  useClickThrough();
+
+  const later = useCallback((key: string, ms: number, run: () => void) => {
+    window.clearTimeout(timers.current[key]);
+    timers.current[key] = window.setTimeout(run, ms);
+  }, []);
+  const cancel = useCallback((key: string) => window.clearTimeout(timers.current[key]), []);
 
   useEffect(() => {
-    const onEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setMenu(null);
-    };
+    PRELOAD.forEach(source => { new Image().src = source; });
+    const onEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setMenu(false); };
     window.addEventListener('keydown', onEscape);
-    return () => window.removeEventListener('keydown', onEscape);
+    const pending = timers.current;
+    return () => {
+      window.removeEventListener('keydown', onEscape);
+      Object.values(pending).forEach(id => window.clearTimeout(id));
+    };
   }, []);
 
+  const say = useCallback((text: string, bubbleIcon?: string, ms = 3200) => {
+    setBubble({ id: nextId++, text, icon: bubbleIcon });
+    later('bubble', ms, () => setBubble(null));
+  }, [later]);
+
+  const playElise = useCallback((next: EliseAct, ms: number, after?: () => void) => {
+    setAct(next);
+    later('elise', ms, () => { setAct(null); after?.(); });
+  }, [later]);
+
+  const playCat = useCallback((next: CatAct) => {
+    setCatAct(next);
+    later('cat', CAT_TRICK_MS[next], () => setCatAct(null));
+  }, [later]);
+
+  const resetActs = useCallback(() => {
+    cancel('elise');
+    cancel('cat');
+    setAct(null);
+    setCatAct(null);
+  }, [cancel]);
+
+  // Idle life: every so often Elise glances around or the cat does something.
+  const calm = !walking && pose === 'idle' && !act && !catAct && !menu && catPose === 'sit';
   useEffect(() => {
-    [ELISE_WALK_SHEET, '/assets/cat/poses/walk_01.png', '/assets/cat/poses/walk_02.png']
-      .forEach(source => {
-        const image = new Image();
-        image.src = source;
-      });
-  }, []);
+    if (!calm) return;
+    const id = window.setTimeout(() => {
+      const roll = Math.random();
+      if (roll < 0.4) playElise('idleAlt', 2600);
+      else if (roll < 0.65) playCat('stretch');
+      else if (roll < 0.85) playCat('wave');
+      else playCat('roll');
+    }, 8000 + Math.random() * 7000);
+    return () => window.clearTimeout(id);
+  }, [calm, playCat, playElise]);
 
-  useEffect(() => {
-    if (!walking) return;
-
-    const timer = window.setInterval(() => {
-      setWalkFrame(current => (current + 1) % ELISE_WALK_FRAME_COUNT);
-      setWalkOffset(current => {
-        const next = current + walkDirection * 4;
-        if (next >= 92) {
-          setWalkDirection(-1);
-          return 92;
-        }
-        if (next <= 0) {
-          setWalkDirection(1);
-          return 0;
-        }
-        return next;
-      });
-    }, 220);
-
-    return () => window.clearInterval(timer);
-  }, [walking, walkDirection]);
-
-  function send(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const value = input.trim();
-    if (!value) return;
-    setMessages(previous => [
-      ...previous,
-      { from: 'you', text: value },
-      { from: 'elise', text: '我聽到了～目前還是本地示範回覆，接下來會加入真正的 AI API。' },
-    ]);
-    setInput('');
-  }
-
-  async function dragElise(event: MouseEvent<HTMLButtonElement>) {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    setMenu(null);
-    try {
-      await getCurrentWindow().startDragging();
-    } catch {
-      // Browser-only preview does not support native window dragging.
+  function poke() {
+    if (act === 'petCat') return;
+    walker.stop();
+    resetActs();
+    if (pose === 'sleep') {
+      setPose('idle');
+      setCatPose('sit');
+      say('嗯…？我醒了…', 'question');
+      return;
     }
-  }
-
-  function openMenu(event: MouseEvent<HTMLButtonElement>) {
-    event.preventDefault();
-    event.stopPropagation();
-    const bounds = event.currentTarget.closest('.desktop')?.getBoundingClientRect();
-    if (!bounds) return;
-    const menuWidth = 178;
-    const menuHeight = 260;
-    setMenu({
-      x: Math.max(8, Math.min(event.clientX - bounds.left, bounds.width - menuWidth - 8)),
-      y: Math.max(8, Math.min(event.clientY - bounds.top, bounds.height - menuHeight - 8)),
-    });
-  }
-
-  function withMenuClosed(action: () => void) {
-    setMenu(null);
-    action();
-  }
-
-  function toggleWalking() {
-    const next = !walking;
-    setWalking(next);
-    setPose('idle');
-    setCatPose('sit');
-    setWalkFrame(0);
-  }
-
-  function toggleSleep() {
-    setWalking(false);
-    setWalkOffset(0);
-    setWalkDirection(1);
-    const sleeping = pose !== 'sleep';
-    setPose(sleeping ? 'sleep' : 'idle');
-    setCatPose(sleeping ? 'sleep' : 'sit');
+    playElise('surprised', 1400);
+    playCat('surprised');
+    say(pick(POKE_LINES), 'exclamation', 2200);
   }
 
   function petCat() {
-    setMenu(null);
-    setCatPose(previous => previous === 'happy' ? 'sit' : 'happy');
-    setMessages(previous => [
-      ...previous,
-      { from: 'elise', text: '小貓很喜歡你摸摸牠～ 🐱' },
-    ]);
+    walker.stop();
+    resetActs();
+    setPose('idle');
+    setCatPose('sit');
+    say('乖～乖～', 'heart', 3000);
+    playElise('petCat', 3200, () => playCat('happy'));
   }
+
+  function toggleWalking() {
+    resetActs();
+    setPose('idle');
+    setCatPose('sit');
+    if (walking) {
+      walker.stop();
+    } else {
+      void walker.start();
+      say('我們出發吧～', 'paw_print', 2000);
+    }
+  }
+
+  function toggleSit() {
+    walker.stop();
+    resetActs();
+    setPose(current => (current === 'sit' ? 'idle' : 'sit'));
+    setCatPose(current => (current === 'sleep' ? 'sit' : current));
+  }
+
+  function toggleSleep() {
+    walker.stop();
+    resetActs();
+    const sleeping = pose !== 'sleep';
+    setPose(sleeping ? 'sleep' : 'idle');
+    setCatPose(sleeping ? 'sleep' : 'sit');
+    if (sleeping) say('晚安…', 'sleep_zzz', 2400);
+    else say('早安～睡得好飽。', 'sparkles', 2400);
+  }
+
+  function catTrick(trick: CatAct) {
+    if (walking) return;
+    if (act === 'petCat') resetActs();
+    setCatPose(current => (current === 'sleep' && pose !== 'sleep' ? 'sit' : current));
+    playCat(trick);
+  }
+
+  function toggleLoaf() {
+    if (walking) return;
+    cancel('cat');
+    setCatAct(null);
+    setCatPose(current => (current === 'loaf' ? 'sit' : 'loaf'));
+  }
+
+  function sendMessage(text: string) {
+    setMessages(previous => [...previous, { id: nextId++, from: 'you', text }]);
+    setTyping(true);
+    later('reply', 700 + Math.random() * 600, () => {
+      setTyping(false);
+      setMessages(previous => [...previous, { id: nextId++, from: 'elise', text: pick(REPLIES) }]);
+    });
+  }
+
+  function pressElise(event: ReactMouseEvent<HTMLButtonElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    setMenu(false);
+    const startX = event.screenX;
+    const startY = event.screenY;
+    const cleanup = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    const onMove = (move: MouseEvent) => {
+      if (Math.hypot(move.screenX - startX, move.screenY - startY) < DRAG_THRESHOLD) return;
+      cleanup();
+      // Dragging and walking both move the window; dragging wins.
+      walker.stop();
+      getCurrentWindow().startDragging().catch(() => {
+        // Browser-only preview does not support native window dragging.
+      });
+    };
+    const onUp = () => {
+      cleanup();
+      poke();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  function openMenu(event: ReactMouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    setMenu(true);
+  }
+
+  function choose(action: () => void) {
+    return () => {
+      setMenu(false);
+      action();
+    };
+  }
+
+  const mood: Expression =
+    act === 'surprised' ? 'surprised'
+      : act === 'petCat' || walking ? 'happy'
+        : pose === 'sleep' ? 'sleepy'
+          : pose === 'sit' ? 'shy'
+            : typing ? 'speaking' : 'neutral';
+
+  const status =
+    walking ? '和小貓散步中…'
+      : act === 'petCat' ? '正在摸摸小貓'
+        : pose === 'sleep' ? '睡著了 Zzz'
+          : pose === 'sit' ? '安靜地坐著'
+            : '陪在你身邊';
+
+  const sections: MenuSection[] = [
+    {
+      title: 'Elise',
+      items: [
+        { id: 'chat', label: '聊天', icon: 'chat_heart', active: chatOpen, onSelect: choose(() => setChatOpen(true)) },
+        { id: 'walk', label: walking ? '停下' : '散步', icon: walking ? 'pause' : 'play', active: walking, onSelect: choose(toggleWalking) },
+        { id: 'sit', label: pose === 'sit' ? '站起來' : '坐下', icon: pose === 'sit' ? 'chevrons_up' : 'home', active: pose === 'sit', onSelect: choose(toggleSit) },
+        { id: 'sleep', label: pose === 'sleep' ? '醒來' : '睡覺', icon: pose === 'sleep' ? 'sparkles' : 'sleep_zzz', active: pose === 'sleep', onSelect: choose(toggleSleep) },
+        { id: 'poke', label: '戳一下', icon: 'exclamation', disabled: act === 'petCat', onSelect: choose(poke) },
+      ],
+    },
+    {
+      title: '小貓',
+      items: [
+        { id: 'pet', label: '摸摸', icon: 'paw_print', onSelect: choose(petCat) },
+        { id: 'roll', label: '打滾', icon: 'spiral', disabled: walking, onSelect: choose(() => catTrick('roll')) },
+        { id: 'wave', label: '揮手', icon: 'heart_sparkle', disabled: walking, onSelect: choose(() => catTrick('wave')) },
+        { id: 'stretch', label: '伸懶腰', icon: 'star', disabled: walking, onSelect: choose(() => catTrick('stretch')) },
+        { id: 'loaf', label: catPose === 'loaf' ? '坐好' : '趴下', icon: 'heart', active: catPose === 'loaf', disabled: walking, onSelect: choose(toggleLoaf) },
+      ],
+    },
+  ];
+
+  const eliseImage = walking ? eliseImages.idle : eliseImages[act ?? pose];
+  const layout = walking || act ? 'idle' : pose;
+  const catState = walker.catMoving ? 'walk' : catAct ?? (pose === 'sleep' ? 'sleep' : catPose);
+  const catHidden = act === 'petCat';
 
   return (
     <main
       className="desktop"
       onMouseDown={event => {
-        if (!(event.target as Element).closest('.pet-menu')) setMenu(null);
+        if (!(event.target as Element).closest('.pet-menu')) setMenu(false);
       }}
     >
-      <div
-        className={`pet-group pose-${pose} ${walking ? 'walking' : ''} ${walking && walkDirection < 0 ? 'facing-left' : ''}`}
-        style={{ left: 8 + walkOffset }}
-      >
-        <div className="elise-shell">
-          <button
-            className={`character ${walking ? 'walk' : pose}`}
-            onMouseDown={dragElise}
-            onContextMenu={openMenu}
-            title="左鍵拖動 Elise · 右鍵開啟選單"
-            aria-label="Elise：左鍵拖動，右鍵開啟選單"
-          >
-            {walking ? (
-              <span
-                className="walk-sprite"
-                aria-hidden="true"
-                style={{
-                  backgroundPosition: `${(walkFrame % 4) * (100 / 3)}% ${Math.floor(walkFrame / 4) * 100}%`,
-                }}
-              />
-            ) : (
-              <img src={eliseImages[pose]} alt="Elise Q 版角色" draggable={false} />
-            )}
-            {!walking && pose === 'sleep' && <span className="zzz">Zzz</span>}
-          </button>
-        </div>
-
-        <button
-          className={`cat ${walking ? 'walk' : catPose}`}
-          onClick={petCat}
-          onContextMenu={event => {
-            event.preventDefault();
-            if (walking) return;
-            setCatPose(current => current === 'stretch' ? 'sit' : 'stretch');
-          }}
-          title="左鍵摸貓，右鍵伸懶腰"
-          aria-label="灰白貓咪"
-        >
-          <img
-            src={walking ? catWalkImages[walkFrame] : catImages[catPose]}
-            alt="灰白貓咪"
-            draggable={false}
+      <div className="stage" ref={stageRef} style={{ width: STAGE_WIDTH }}>
+        {chatOpen && (
+          <ChatPanel
+            messages={messages}
+            typing={typing}
+            mood={mood}
+            onSend={sendMessage}
+            onClose={() => setChatOpen(false)}
           />
-        </button>
-      </div>
+        )}
 
-      {menu && (
-        <div
-          className="pet-menu"
-          role="menu"
-          aria-label="Elise 選單"
-          style={{ left: menu.x, top: menu.y }}
-          onContextMenu={event => event.preventDefault()}
-        >
-          <div className="menu-title">Elise ♡</div>
-          <button role="menuitem" onClick={() => withMenuClosed(() => setChatOpen(true))}>
-            <span>💬</span> 開啟聊天
-          </button>
-          <button role="menuitem" onClick={() => withMenuClosed(toggleWalking)}>
-            <span>🐾</span> {walking ? '停止散步' : '一起散步'}
-          </button>
+        {bubble && !chatOpen && !menu && (
+          <div className={`bubble layout-${layout}`} key={bubble.id} role="status">
+            {bubble.icon && <Icon name={bubble.icon} size={18} />}
+            <span>{bubble.text}</span>
+          </div>
+        )}
+
+        <div className={`pet-group pose-${layout} ${walking ? 'walking' : ''}`}>
+          <div className="elise-shell">
+            <button
+              className={`character ${walking ? 'walk' : act ?? pose}`}
+              onMouseDown={pressElise}
+              onContextMenu={openMenu}
+              title="點一下戳戳 Elise · 按住拖動 · 右鍵開啟選單"
+              aria-label="Elise：點擊互動，按住拖動，右鍵開啟選單"
+            >
+              {walking && !turning ? (
+                <span className="walk-sprite" aria-hidden="true" ref={walker.spriteRef} />
+              ) : (
+                <img key={eliseImage} src={eliseImage} alt="Elise Q 版角色" draggable={false} />
+              )}
+              {!walking && pose === 'sleep' && !act && <span className="zzz" aria-hidden="true">Z<small>z</small><small>z</small></span>}
+            </button>
+          </div>
+
           <button
-            role="menuitem"
-            onClick={() => withMenuClosed(() => {
-              setWalking(false);
-              setWalkOffset(0);
-              setWalkDirection(1);
-              setPose(current => current === 'sit' ? 'idle' : 'sit');
-              setCatPose('sit');
-            })}
+            ref={catRef}
+            className={`cat ${catState} ${catHidden ? 'hidden' : ''}`}
+            onClick={() => {
+              if (walking || catHidden) return;
+              playCat('happy');
+              say('小貓很喜歡你摸摸牠～', 'paw_print', 2400);
+            }}
+            onContextMenu={openMenu}
+            title="左鍵摸貓 · 右鍵開啟選單"
+            aria-label="灰白貓咪"
+            aria-hidden={catHidden}
+            tabIndex={catHidden ? -1 : 0}
           >
-            <span>🌸</span> {pose === 'sit' ? '站起來' : '坐下'}
-          </button>
-          <button
-            role="menuitem"
-            onClick={() => withMenuClosed(toggleSleep)}
-          >
-            <span>🌙</span> {pose === 'sleep' ? '醒來' : '睡覺'}
-          </button>
-          <div className="menu-divider" />
-          <button role="menuitem" className="menu-exit" onClick={() => withMenuClosed(() => { void getCurrentWindow().close(); })}>
-            <span>×</span> 退出桌寵
+            <img
+              ref={catImageRef}
+              src={walker.catMoving ? CAT_WALK_IMAGES[0] : catImages[catState as CatPose | CatAct]}
+              alt="灰白貓咪"
+              draggable={false}
+            />
           </button>
         </div>
-      )}
 
-      {chatOpen && (
-        <section className="chat">
-          <header>
-            <span>Elise · 對話</span>
-            <button aria-label="關閉聊天" onClick={() => setChatOpen(false)}>×</button>
-          </header>
-          <div className="log" aria-live="polite">
-            {messages.map((message, index) => (
-              <p className={message.from} key={index}>{message.text}</p>
-            ))}
-          </div>
-          <form onSubmit={send}>
-            <input
-              aria-label="輸入訊息"
-              placeholder="跟 Elise 說點什麼…"
-              value={input}
-              onChange={event => setInput(event.target.value)}
-            />
-            <button type="submit">送出</button>
-          </form>
-        </section>
-      )}
+        {menu && (
+          <PetMenu
+            bottom={HEAD_HEIGHT[layout] + 12}
+            status={status}
+            mood={mood}
+            sections={sections}
+            onClose={() => setMenu(false)}
+            onExit={choose(() => { void getCurrentWindow().close(); })}
+          />
+        )}
+      </div>
     </main>
   );
 }
