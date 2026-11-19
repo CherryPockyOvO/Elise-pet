@@ -1,7 +1,7 @@
 /** Persistent poses Elise stays in until told otherwise. */
 export type ElisePose = 'idle' | 'sit' | 'sleep';
 /** Short one-off actions that return to the current pose. */
-export type EliseAct = 'petCat' | 'surprised' | 'idleAlt';
+export type EliseAct = 'petCat' | 'surprised' | 'stand';
 /** Cat states: `sit`/`loaf`/`sleep` persist, the rest are short tricks. */
 export type CatPose = 'sit' | 'loaf' | 'sleep';
 export type CatAct = 'happy' | 'stretch' | 'roll' | 'wave' | 'surprised';
@@ -11,9 +11,8 @@ export type Expression =
 const elise = (name: string) => `/assets/elise/poses/${name}.png`;
 const cat = (name: string) => `/assets/cat/poses/${name}.png`;
 
-export const eliseImages: Record<ElisePose | EliseAct, string> = {
+export const eliseImages: Record<ElisePose | Exclude<EliseAct, 'stand'>, string> = {
   idle: elise('idle_front'),
-  idleAlt: elise('idle_front_alt'),
   sit: elise('sit_shy'),
   sleep: elise('sleep'),
   petCat: elise('pet_cat'),
@@ -31,7 +30,8 @@ export const catImages: Record<CatPose | CatAct, string> = {
   surprised: cat('surprised'),
 };
 
-export const ELISE_WALK_SHEET = elise('walk_side_sheet');
+declare const __ELISE_FRAMES__: { walk: string[]; stand: string[]; front2left: string[]; left2back: string[] };
+export const ELISE_FRAMES = __ELISE_FRAMES__;
 export const CAT_WALK_IMAGES = [cat('walk_01'), cat('walk_02')];
 
 export const expression = (name: Expression) => `/assets/elise/expressions/${name}.png`;
@@ -40,7 +40,7 @@ export const icon = (name: string) => `/assets/ui/icons/${name}.png`;
 export const PRELOAD = [
   ...Object.values(eliseImages),
   ...Object.values(catImages),
-  ELISE_WALK_SHEET,
+  ...Object.values(ELISE_FRAMES).flat(),
   ...CAT_WALK_IMAGES,
 ];
 
@@ -54,4 +54,5 @@ export const ICON_FILL: Record<string, number> = {
   chevrons_up: 3.37, sleep_zzz: 2.13, sparkles: 2.13, spiral: 1.67,
   heart_sparkle: 1.78, star: 2.84, heart: 1.75, close_round: 2.17, close: 3.71,
   question: 1.97, exclamation: 1.91, double_exclamation: 2.08, alert: 2.39,
+  settings: 2.88, thought_bubble: 1.35, bookmark: 3.41,
 };

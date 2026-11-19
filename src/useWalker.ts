@@ -1,48 +1,61 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { isTauri } from '@tauri-apps/api/core';
-import { currentMonitor, getCurrentWindow, LogicalPosition } from '@tauri-apps/api/window';
-import { CAT_WALK_IMAGES as CAT_WALK_FRAMES } from './assets';
+import { currentMonitor, getCurrentWindow, PhysicalPosition } from '@tauri-apps/api/window';
+import { CAT_WALK_IMAGES as CAT_WALK_FRAMES, ELISE_FRAMES, eliseImages } from './assets';
+import { preloadImportedAction, type ImportedAction } from './actionLibrary';
+import { betweenHeadings, HEADING_STILLS, WALK_FOOT_OFFSET, type Heading, type Side, type TurnFrame } from './eliseTurns';
 
 /** Width of the pet window / stage. Elise's body is centred in it. */
 export const STAGE_WIDTH = 420;
 const ELISE_CENTER = STAGE_WIDTH / 2;
 
-/** Walk frames are 512px canvases drawn into a 290px box. */
-const SPRITE_SCALE = 290 / 512;
-export const WALK_FRAME_COUNT = 8;
-/**
- * How far (in 512px canvas units) the planted foot slides backwards while each
- * frame is on screen, measured from walk_side_01..08. Moving the body by exactly
- * this much per frame keeps the feet glued to the ground instead of sliding.
- */
-const FOOT_TRAVEL = [22, 43, 59, 34, 30, 18, 61, 39];
-const MEAN_TRAVEL = FOOT_TRAVEL.reduce((sum, value) => sum + value, 0) / FOOT_TRAVEL.length;
-const BASE_FRAME_MS = 150;
-/** Long strides are held a little longer so speed stays even across the cycle. */
-const FRAME_MS = FOOT_TRAVEL.map(travel => BASE_FRAME_MS * (0.5 + 0.5 * travel / MEAN_TRAVEL));
-const FRAME_SPEED = FOOT_TRAVEL.map((travel, index) => travel * SPRITE_SCALE / FRAME_MS[index]);
-/** Small vertical body bob (px): low on the down step, high on the up step. */
-const BOB = [0, 1, 0, -1, 0, 1, 0, -1];
+const WALK_SPEED = 0.145; // Logical pixels per millisecond at the default character size.
 
-const TURN_MS = 520;
 /** Cat offset from its CSS spot when it has to walk on Elise's left side. */
 const CAT_LEFT_DX = -166;
 const CAT_SPEED = 0.42;
 const CAT_FRAME_MS = 150;
+const MIN_STROLL_DISTANCE = 70;
+const SCREEN_EDGE_MARGIN = 56;
+const EASE_DISTANCE = 45;
 
-export type WalkPhase = 'off' | 'walk' | 'turn';
+export type WalkPhase = 'off' | 'walk' | 'turn' | 'look' | 'settle' | 'perform';
+type TurnPhase = Exclude<WalkPhase, 'off' | 'walk'>;
 type Facing = 1 | -1;
+export type ConfiguredWalkAction = ImportedAction & { ending?: Heading };
+const sideOf = (facing: Facing): Side => facing < 0 ? 'left' : 'right';
+const randomLegLength = () => 120 + Math.random() * 240;
+const randomPace = () => 0.78 + Math.random() * 0.3;
+
+function pickLeg(x: number, min: number, max: number, distance: number, minTravel: number, previous?: Facing, preferred?: Side) {
+  const roomLeft = x - min;
+  const roomRight = max - x;
+  // Prefer an inward heading near the boundary and occasional reversals in open space.
+  const leftWeight = preferred !== 'right' && roomLeft >= minTravel ? Math.min(roomLeft, distance) * (previous === 1 ? 3 : 1) : 0;
+  const rightWeight = preferred !== 'left' && roomRight >= minTravel ? Math.min(roomRight, distance) * (previous === -1 ? 3 : 1) : 0;
+  const total = leftWeight + rightWeight;
+  if (!total) return;
+  const facing: Facing = Math.random() * total < leftWeight ? -1 : 1;
+  const room = facing < 0 ? roomLeft : roomRight;
+  return { facing, destination: x + facing * Math.min(distance, room) };
+}
+
+function walkClip(actions: readonly ConfiguredWalkAction[], facing: Facing) {
+  const matches = actions.filter(action => action.heading === sideOf(facing));
+  const selected = matches.length > 1 ? matches[Math.floor(Math.random() * matches.length)] : matches[0];
+  if (selected) preloadImportedAction(selected);
+  return selected;
+}
 
 export type WalkerRefs = {
   stage: RefObject<HTMLDivElement | null>;
-  sprite: RefObject<HTMLSpanElement | null>;
+  sprite: RefObject<HTMLImageElement | null>;
   cat: RefObject<HTMLButtonElement | null>;
   catImage: RefObject<HTMLImageElement | null>;
+  scale: RefObject<number>;
+  walkActions: RefObject<readonly ConfiguredWalkAction[]>;
+  actionFps: RefObject<Readonly<Record<string, number>>>;
 };
-
-function spritePosition(frame: number) {
-  return `${(frame % 4) * (100 / 3)}% ${Math.floor(frame / 4) * 100}%`;
-}
 
 /**
  * Drives the walk with requestAnimationFrame. Per-frame values are written
@@ -52,19 +65,34 @@ function spritePosition(frame: number) {
  */
 export function useWalker(refs: WalkerRefs) {
   const [phase, setPhase] = useState<WalkPhase>('off');
-  const [facing, setFacing] = useState<Facing>(1);
+  const [heading, setHeading] = useState<Heading>('front');
+  const [paused, setPausedState] = useState(false);
   const [catMoving, setCatMoving] = useState(false);
   const native = useRef(isTauri());
   const sim = useRef({
     phase: 'off' as WalkPhase,
     facing: 1 as Facing,
+    heading: 'front' as Heading,
+    paused: false,
     x: ELISE_CENTER,
     min: ELISE_CENTER,
     max: ELISE_CENTER,
     windowY: 0,
+    dpi: 1,
+    segmentStart: ELISE_CENTER,
+    destination: ELISE_CENTER,
+    continuous: false,
+    walkEnding: 'front' as Heading,
+    walkFallbackEnding: 'front' as Heading,
+    minTravel: MIN_STROLL_DISTANCE,
+    pace: 1,
     frame: 0,
     frameTime: 0,
+    walkClip: undefined as ImportedAction | undefined,
+    turnIndex: 0,
     turnTime: 0,
+    turnFrames: [] as TurnFrame[],
+    turnEnding: 'front' as Heading,
     catDx: 0,
     catFacing: 1 as Facing,
     catFrame: 0,
@@ -74,16 +102,40 @@ export function useWalker(refs: WalkerRefs) {
     last: 0,
     sending: false,
     sentX: Number.NaN,
+    flushPosition: false,
     token: 0,
   });
 
   const applySprite = useCallback(() => {
     const s = sim.current;
     const sprite = refs.sprite.current;
-    if (!sprite) return;
-    sprite.style.backgroundPosition = spritePosition(s.frame);
-    sprite.style.transform = `translateY(${BOB[s.frame]}px) scaleX(${s.facing})`;
+    if (!sprite || s.phase === 'off') return;
+    const turn = s.phase === 'walk' ? undefined
+      : s.turnFrames[Math.min(s.turnIndex, s.turnFrames.length - 1)];
+    const still = s.heading === 'front' ? undefined : HEADING_STILLS[s.heading];
+    const frame = s.phase === 'walk'
+      ? { source: (s.walkClip?.frames ?? ELISE_FRAMES.walk)[s.frame], mirrored: !s.walkClip && s.facing < 0,
+        footOffset: s.walkClip?.footOffset ?? WALK_FOOT_OFFSET }
+      : turn ?? still ?? { source: eliseImages.idle, mirrored: false, footOffset: 0 };
+    const { source, mirrored, footOffset } = frame;
+    if (sprite.getAttribute('src') !== source) sprite.src = source;
+    sprite.style.transform = `translateY(${footOffset}px) scaleX(${mirrored ? -1 : 1})`;
   }, [refs.sprite]);
+
+  const updateHeading = useCallback((next: Heading) => {
+    sim.current.heading = next;
+    setHeading(next);
+  }, []);
+
+  const beginTurn = useCallback((next: TurnPhase, frames: TurnFrame[], ending: Heading) => {
+    const s = sim.current;
+    s.turnIndex = 0;
+    s.turnTime = 0;
+    s.turnFrames = frames;
+    s.turnEnding = ending;
+    s.phase = next;
+    setPhase(next);
+  }, []);
 
   const apply = useCallback(() => {
     const s = sim.current;
@@ -102,51 +154,82 @@ export function useWalker(refs: WalkerRefs) {
       }
     }
 
-    const left = Math.round(s.x - ELISE_CENTER);
     if (native.current) {
-      if (s.phase !== 'off' && left !== s.sentX && !s.sending) {
+      const left = Math.round((s.x - ELISE_CENTER) * s.dpi);
+      if ((s.phase === 'walk' || s.flushPosition) && left !== s.sentX && !s.sending) {
         s.sending = true;
         s.sentX = left;
         void getCurrentWindow()
-          .setPosition(new LogicalPosition(left, s.windowY))
+          .setPosition(new PhysicalPosition(left, s.windowY))
           .catch(() => undefined)
           .finally(() => { s.sending = false; });
       }
+      if (left === s.sentX) s.flushPosition = false;
     } else if (refs.stage.current) {
-      refs.stage.current.style.left = `${left}px`;
+      refs.stage.current.style.left = `${Math.round(s.x - ELISE_CENTER)}px`;
+      s.flushPosition = false;
     }
   }, [applySprite, refs.cat, refs.catImage, refs.stage]);
 
   const tick = useCallback((now: number) => {
     const s = sim.current;
+    if (s.paused && s.phase !== 'off') {
+      s.raf = 0;
+      return;
+    }
     const dt = Math.min(now - s.last, 50);
     s.last = now;
 
+    let gait = s.pace;
     if (s.phase === 'walk') {
-      let left = dt;
-      while (left > 0) {
-        const step = Math.min(left, FRAME_MS[s.frame] - s.frameTime);
-        s.x += s.facing * FRAME_SPEED[s.frame] * step;
-        s.frameTime += step;
-        left -= step;
-        if (s.frameTime >= FRAME_MS[s.frame] - 1e-6) {
-          s.frameTime = 0;
-          s.frame = (s.frame + 1) % WALK_FRAME_COUNT;
+      const end = s.destination;
+      const remaining = Math.max(0, (end - s.x) * s.facing);
+      const ramp = Math.min(1, Math.abs(s.x - s.segmentStart) / EASE_DISTANCE, remaining / EASE_DISTANCE);
+      gait *= 0.55 + 0.45 * ramp;
+      // Ease both the animation clock and travel with the same pace.
+      const stride = dt * gait;
+      const travel = WALK_SPEED * refs.scale.current * stride;
+      const reachedEnd = travel >= remaining;
+      s.x = reachedEnd ? end : s.x + s.facing * travel;
+      s.frameTime += stride;
+      const frameMs = 1000 / (s.walkClip?.fps ?? refs.actionFps.current.walk ?? 20);
+      const passedFrames = Math.floor(s.frameTime / frameMs);
+      s.frameTime %= frameMs;
+      s.frame = (s.frame + passedFrames) % (s.walkClip?.frames.length ?? ELISE_FRAMES.walk.length);
+      if (reachedEnd) {
+        s.flushPosition = true;
+        const next = s.continuous ? pickLeg(s.x, s.min, s.max, randomLegLength(), s.minTravel, s.facing) : undefined;
+        if (!next) {
+          beginTurn('settle', betweenHeadings(s.heading, s.walkEnding, refs.actionFps.current), s.walkEnding);
+        } else {
+          const reversing = next.facing !== s.facing;
+          s.facing = next.facing;
+          s.destination = next.destination;
+          s.segmentStart = s.x;
+          s.pace = randomPace();
+          const clip = walkClip(refs.walkActions.current, s.facing);
+          s.walkEnding = clip?.ending ?? s.walkFallbackEnding;
+          if (clip?.id !== s.walkClip?.id) {
+            s.walkClip = clip;
+            s.frame = 0;
+            s.frameTime = 0;
+          }
+          if (reversing) {
+            const side = sideOf(s.facing);
+            beginTurn('turn', betweenHeadings(s.heading, side, refs.actionFps.current), side);
+          }
         }
       }
-      if ((s.facing > 0 && s.x >= s.max) || (s.facing < 0 && s.x <= s.min)) {
-        s.x = Math.max(s.min, Math.min(s.max, s.x));
-        s.phase = 'turn';
-        s.turnTime = 0;
-        setPhase('turn');
-      }
-    } else if (s.phase === 'turn') {
+    } else if (s.phase !== 'off') {
       s.turnTime += dt;
+      while (s.turnIndex < s.turnFrames.length && s.turnTime >= s.turnFrames[s.turnIndex].duration) {
+        s.turnTime -= s.turnFrames[s.turnIndex].duration;
+        s.turnIndex += 1;
+      }
     }
 
     // The cat always walks on the side Elise is heading towards.
-    const heading: Facing = s.phase === 'turn' ? (s.facing > 0 ? -1 : 1) : s.facing;
-    const catTarget = s.phase !== 'off' && heading < 0 ? CAT_LEFT_DX : 0;
+    const catTarget = (s.phase === 'walk' || s.phase === 'turn') && s.facing < 0 ? CAT_LEFT_DX : 0;
     const diff = catTarget - s.catDx;
     const reach = CAT_SPEED * dt;
     s.catDx = Math.abs(diff) <= reach ? catTarget : s.catDx + Math.sign(diff) * reach;
@@ -154,9 +237,9 @@ export function useWalker(refs: WalkerRefs) {
     s.catFacing = repositioning ? (diff > 0 ? 1 : -1) : s.facing;
     const catMoving = s.phase === 'walk' || repositioning;
     if (catMoving) {
-      s.catTime += dt;
+      s.catTime += repositioning ? dt : dt * gait;
       if (s.catTime >= CAT_FRAME_MS) {
-        s.catTime = 0;
+        s.catTime -= CAT_FRAME_MS;
         s.catFrame = (s.catFrame + 1) % CAT_WALK_FRAMES.length;
       }
     }
@@ -165,18 +248,24 @@ export function useWalker(refs: WalkerRefs) {
       setCatMoving(catMoving);
     }
 
-    if (s.phase === 'turn' && s.turnTime >= TURN_MS && s.catDx === catTarget) {
-      s.facing = heading;
-      s.frame = 0;
-      s.frameTime = 0;
-      s.phase = 'walk';
-      setFacing(heading);
-      setPhase('walk');
+    if (s.phase !== 'walk' && s.phase !== 'off' && s.turnIndex === s.turnFrames.length) {
+      if (s.phase !== 'turn') {
+        updateHeading(s.turnEnding);
+        s.phase = 'off';
+        setPhase('off');
+      } else if (s.catDx === catTarget) {
+        updateHeading(s.turnEnding);
+        s.segmentStart = s.x;
+        s.frame = 0;
+        s.frameTime = 0;
+        s.phase = 'walk';
+        setPhase('walk');
+      }
     }
 
     apply();
-    s.raf = s.phase !== 'off' || s.catMoving ? requestAnimationFrame(tick) : 0;
-  }, [apply]);
+    s.raf = s.phase !== 'off' || s.catMoving || s.flushPosition ? requestAnimationFrame(tick) : 0;
+  }, [apply, beginTurn, updateHeading, refs.actionFps, refs.scale, refs.walkActions]);
 
   const ensureLoop = useCallback(() => {
     const s = sim.current;
@@ -185,61 +274,122 @@ export function useWalker(refs: WalkerRefs) {
     s.raf = requestAnimationFrame(tick);
   }, [tick]);
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (distance?: number, options?: { action?: ImportedAction; ending?: Heading; preferred?: Side }) => {
     const s = sim.current;
     const token = ++s.token;
+    let { x, windowY, dpi } = s;
+    let min = ELISE_CENTER;
+    let max = window.innerWidth - ELISE_CENTER;
     if (native.current) {
       try {
         const win = getCurrentWindow();
-        const position = (await win.outerPosition()).toLogical(await win.scaleFactor());
-        const monitor = await currentMonitor();
-        s.x = position.x + ELISE_CENTER;
-        s.windowY = position.y;
-        if (monitor) {
-          const area = monitor.workArea;
-          const scale = monitor.scaleFactor;
-          s.min = area.position.x / scale + ELISE_CENTER;
-          s.max = (area.position.x + area.size.width) / scale - ELISE_CENTER;
-        } else {
-          s.min = s.max = s.x;
-        }
+        const [position, scale, monitor] = await Promise.all([
+          win.outerPosition(), win.scaleFactor(), currentMonitor(),
+        ]);
+        if (!monitor) return;
+        const area = monitor.workArea;
+        dpi = scale;
+        x = position.x / dpi + ELISE_CENTER;
+        windowY = position.y;
+        min = area.position.x / dpi + ELISE_CENTER;
+        max = (area.position.x + area.size.width) / dpi - ELISE_CENTER;
       } catch {
         return;
       }
-    } else {
-      s.min = ELISE_CENTER;
-      s.max = Math.max(ELISE_CENTER, window.innerWidth - ELISE_CENTER);
     }
-    if (token !== s.token) return;
-    s.sentX = Number.NaN;
+    if (token !== s.token || max <= min) return;
+    const continuous = distance === undefined;
+    const margin = Math.min(SCREEN_EDGE_MARGIN, Math.max(0, (max - min) / 2 - MIN_STROLL_DISTANCE));
+    min += margin;
+    max -= margin;
+    const minTravel = continuous ? Math.min(MIN_STROLL_DISTANCE, (max - min) / 2) : MIN_STROLL_DISTANCE;
+    const leg = pickLeg(x, min, max, distance ?? randomLegLength(), minTravel, undefined, options?.preferred);
+    if (!leg) return;
+
+    s.x = s.segmentStart = x;
+    s.windowY = windowY;
+    s.dpi = dpi;
+    s.min = min;
+    s.max = max;
+    s.facing = leg.facing;
+    s.destination = leg.destination;
+    s.continuous = continuous;
+    s.walkFallbackEnding = options?.ending ?? 'front';
+    s.minTravel = minTravel;
+    s.pace = randomPace();
+    s.flushPosition = false;
+    s.sentX = Math.round((x - ELISE_CENTER) * dpi);
     s.frame = 0;
     s.frameTime = 0;
-    s.phase = 'walk';
-    setPhase('walk');
-    setFacing(s.facing);
+    const configuredClip = continuous ? walkClip(refs.walkActions.current, s.facing) : undefined;
+    s.walkEnding = configuredClip?.ending ?? s.walkFallbackEnding;
+    s.walkClip = continuous ? configuredClip : options?.action;
+    if (!continuous && s.walkClip) preloadImportedAction(s.walkClip);
+    const side = sideOf(leg.facing);
+    beginTurn('turn', betweenHeadings(s.heading, side, refs.actionFps.current), side);
     ensureLoop();
-  }, [ensureLoop]);
+  }, [beginTurn, ensureLoop, refs.actionFps, refs.walkActions]);
 
-  const stop = useCallback(() => {
+  const turnTo = useCallback((ending: Heading, step?: { from: Heading; to: Heading }) => {
+    const s = sim.current;
+    if (s.phase !== 'off') return;
+    const fps = refs.actionFps.current;
+    const frames = step ? [
+      ...betweenHeadings(s.heading, step.from, fps),
+      ...betweenHeadings(step.from, step.to, fps),
+      ...betweenHeadings(step.to, ending, fps),
+    ] : betweenHeadings(s.heading, ending, fps);
+    if (!frames.length) return;
+    beginTurn('look', frames, ending);
+    ensureLoop();
+  }, [beginTurn, ensureLoop, refs.actionFps]);
+
+  const perform = useCallback((action: ImportedAction, ending: Heading) => {
+    const s = sim.current;
+    if (s.phase !== 'off') return;
+    preloadImportedAction(action);
+    const approach = betweenHeadings(s.heading, action.heading, refs.actionFps.current);
+    const frames = action.frames.map(source => ({
+      source, mirrored: false, footOffset: action.footOffset, duration: 1000 / action.fps,
+    }));
+    beginTurn('perform', [...approach, ...frames], ending);
+    ensureLoop();
+  }, [beginTurn, ensureLoop, refs.actionFps]);
+
+  const stop = useCallback((mode: 'keep' | 'front' | 'finish-walk' = 'keep') => {
     const s = sim.current;
     s.token += 1;
-    if (s.phase === 'off') return;
-    s.phase = 'off';
-    setPhase('off');
+    s.flushPosition = false;
+    if (mode === 'front') updateHeading('front');
+    if (mode === 'finish-walk' && s.heading !== s.walkEnding) {
+      beginTurn('settle', betweenHeadings(s.heading, s.walkEnding, refs.actionFps.current), s.walkEnding);
+    } else {
+      s.phase = 'off';
+      setPhase('off');
+    }
     ensureLoop();
+  }, [beginTurn, ensureLoop, refs.actionFps, updateHeading]);
+
+  const setPaused = useCallback((value: boolean) => {
+    const s = sim.current;
+    if (s.paused === value) return;
+    s.paused = value;
+    setPausedState(value);
+    if (!value && s.phase !== 'off') ensureLoop();
   }, [ensureLoop]);
 
   useEffect(() => () => {
     const s = sim.current;
     if (s.raf) cancelAnimationFrame(s.raf);
     s.raf = 0;
+    s.token += 1;
   }, []);
 
   /** Ref callback for the walk sprite so it is correct on its very first paint. */
-  const spriteRef = useCallback((element: HTMLSpanElement | null) => {
+  const spriteRef = useCallback((element: HTMLImageElement | null) => {
     refs.sprite.current = element;
     if (element) applySprite();
   }, [applySprite, refs.sprite]);
 
-  return { phase, facing, catMoving, start, stop, spriteRef };
+  return { phase, heading, paused, catMoving, start, stop, setPaused, turnTo, perform, spriteRef };
 }

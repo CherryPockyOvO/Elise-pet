@@ -12,42 +12,45 @@ import { cursorPosition, getCurrentWindow } from '@tauri-apps/api/window';
  */
 const POLL_MS = 60;
 /** Elements that are always clickable when the cursor is over their box. */
-const SOLID = '.pet-menu, .chat, .bubble';
+const SOLID = '.pet-menu, .chat, .bubble, .deepseek-panel';
 
-const alphaCache = new Map<string, ImageData | null>();
+type AlphaMask = { width: number; height: number; alpha: Uint8Array };
+const alphaCache = new Map<string, AlphaMask>();
 
-function alphaData(source: string): ImageData | null | undefined {
-  if (alphaCache.has(source)) return alphaCache.get(source);
-  alphaCache.set(source, null);
-  const image = new Image();
-  image.onload = () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = image.naturalWidth;
-    canvas.height = image.naturalHeight;
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    if (!context) return;
-    context.drawImage(image, 0, 0);
-    alphaCache.set(source, context.getImageData(0, 0, canvas.width, canvas.height));
-  };
-  image.src = source;
-  return undefined;
+function alphaData(image: HTMLImageElement) {
+  const source = image.currentSrc;
+  const cached = alphaCache.get(source);
+  if (cached) return cached;
+  if (!source || !image.complete || !image.naturalWidth) return;
+  const canvas = document.createElement('canvas');
+  const width = canvas.width = image.naturalWidth;
+  const height = canvas.height = image.naturalHeight;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return;
+  context.drawImage(image, 0, 0);
+  const pixels = context.getImageData(0, 0, width, height).data;
+  const alpha = new Uint8Array(width * height);
+  for (let pixel = 0; pixel < alpha.length; pixel += 1) alpha[pixel] = pixels[pixel * 4 + 3];
+  const mask = { width, height, alpha };
+  alphaCache.set(source, mask);
+  return mask;
 }
 
 /** Alpha around (u, v) in image pixels, with a few pixels of slack for thin edges. */
-function opaqueNear(data: ImageData, u: number, v: number, radius: number) {
+function opaqueNear(data: AlphaMask, u: number, v: number, radius: number) {
   for (let dy = -radius; dy <= radius; dy += radius || 1) {
     for (let dx = -radius; dx <= radius; dx += radius || 1) {
       const x = Math.round(u + dx);
       const y = Math.round(v + dy);
       if (x < 0 || y < 0 || x >= data.width || y >= data.height) continue;
-      if (data.data[(y * data.width + x) * 4 + 3] > 24) return true;
+      if (data.alpha[y * data.width + x] > 24) return true;
     }
   }
   return false;
 }
 
 function hitImage(image: HTMLImageElement, x: number, y: number) {
-  const data = alphaData(image.currentSrc || image.src);
+  const data = alphaData(image);
   if (!data) return true; // not decoded yet: be generous
   const box = image.getBoundingClientRect();
   const scale = Math.min(box.width / data.width, box.height / data.height);
@@ -58,29 +61,21 @@ function hitImage(image: HTMLImageElement, x: number, y: number) {
   return opaqueNear(data, u, (y - top) / scale, 6);
 }
 
-function hitSprite(sprite: HTMLElement, x: number, y: number) {
-  const url = /url\("?([^")]+)"?\)/.exec(getComputedStyle(sprite).backgroundImage)?.[1];
-  const data = url ? alphaData(url) : undefined;
-  if (!data) return true;
-  const box = sprite.getBoundingClientRect();
-  const cell = data.width / 4;
-  const [px, py] = sprite.style.backgroundPosition.split(' ').map(value => parseFloat(value) || 0);
-  const column = Math.round(px / (100 / 3));
-  const row = Math.round(py / 100);
-  let u = (x - box.left) / box.width * cell;
-  if (sprite.style.transform.includes('scaleX(-1)')) u = cell - u;
-  const v = (y - box.top) / box.height * cell;
-  return opaqueNear(data, column * cell + Math.min(cell - 1, Math.max(0, u)), row * cell + v, 6);
-}
-
-export function isInteractiveAt(x: number, y: number) {
+function isInteractiveAt(x: number, y: number) {
+  const cat = document.querySelector<HTMLElement>('.cat:not(.hidden)');
+  const catImage = cat?.querySelector('img');
+  if (cat && catImage) {
+    const box = cat.getBoundingClientRect();
+    const overCatBox = x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
+    // A scaled cat's transparent padding can overlap Elise. Let clicks reach her underneath.
+    const pointerEvents = overCatBox && !hitImage(catImage, x, y) ? 'none' : '';
+    if (cat.style.pointerEvents !== pointerEvents) cat.style.pointerEvents = pointerEvents;
+  }
   const element = document.elementFromPoint(x, y);
   if (!element) return false;
   if (element.closest(SOLID)) return true;
   const pet = element.closest('.character, .cat');
   if (!pet) return false;
-  const sprite = pet.querySelector<HTMLElement>('.walk-sprite');
-  if (sprite) return hitSprite(sprite, x, y);
   const image = pet.querySelector('img');
   return image ? hitImage(image, x, y) : true;
 }

@@ -8,27 +8,31 @@ type Props = {
   messages: Message[];
   typing: boolean;
   mood: Expression;
-  onSend: (text: string) => void;
+  model: string;
+  error: string;
+  active: boolean;
+  onSend: (text: string) => Promise<boolean>;
+  onSettings: () => void;
   onClose: () => void;
 };
 
-export function ChatPanel({ messages, typing, mood, onSend, onClose }: Props) {
+export function ChatPanel({ messages, typing, mood, model, error, active, onSend, onSettings, onClose }: Props) {
   const [input, setInput] = useState('');
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { inputRef.current?.focus({ preventScroll: true }); }, []);
+  useEffect(() => { if (active) inputRef.current?.focus({ preventScroll: true }); }, [active]);
   useEffect(() => {
     const log = logRef.current;
     if (log) log.scrollTop = log.scrollHeight;
-  }, [messages, typing]);
+  }, [messages, typing, error, active]);
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const value = input.trim();
-    if (!value) return;
-    onSend(value);
+    if (!value || typing) return;
     setInput('');
+    if (!await onSend(value)) setInput(draft => draft || value);
   }
 
   return (
@@ -37,8 +41,11 @@ export function ChatPanel({ messages, typing, mood, onSend, onClose }: Props) {
         <span className="avatar" style={{ backgroundImage: `url(${expression(typing ? 'thinking' : mood)})` }} />
         <div className="chat-title">
           <strong>Elise</strong>
-          <span>{typing ? '正在輸入…' : '本地示範 · 尚未接上 AI'}</span>
+          <span>{typing ? 'DeepSeek 回覆中…' : model}</span>
         </div>
+        <button type="button" className="icon-button" aria-label="DeepSeek API 管理" onClick={onSettings}>
+          <Icon name="settings" size={16} />
+        </button>
         <button type="button" className="icon-button" aria-label="關閉聊天" onClick={onClose}>
           <Icon name="close" size={12} />
         </button>
@@ -53,6 +60,7 @@ export function ChatPanel({ messages, typing, mood, onSend, onClose }: Props) {
             <span /><span /><span />
           </p>
         )}
+        {error && <p className="chat-error" role="alert">{error}</p>}
       </div>
 
       <form onSubmit={submit}>
@@ -61,9 +69,10 @@ export function ChatPanel({ messages, typing, mood, onSend, onClose }: Props) {
           aria-label="輸入訊息"
           placeholder="跟 Elise 說點什麼…"
           value={input}
+          maxLength={2000}
           onChange={event => setInput(event.target.value)}
         />
-        <button type="submit" aria-label="送出" disabled={!input.trim()}>
+        <button type="submit" aria-label="送出" disabled={typing || !input.trim()}>
           <Icon name="chat_heart" size={20} />
         </button>
       </form>

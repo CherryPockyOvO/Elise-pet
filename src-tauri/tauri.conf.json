@@ -28,7 +28,11 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPLOCALDATA/actions/*/action-*/frame_*.png"]
+      }
     }
   },
   "bundle": {
