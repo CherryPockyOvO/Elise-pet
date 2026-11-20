@@ -9,7 +9,6 @@ export type ImportedAction = {
   kind: ActionKind;
   fps: number;
   frameCount: number;
-  footOffset: number;
   frames: string[];
 };
 
@@ -23,9 +22,13 @@ export async function loadActionLibrary() {
   return (await invoke<ImportedAction[]>('list_imported_actions')).map(withFrameUrls);
 }
 
-export async function importActionFolder(heading: Heading, kind: ActionKind, fps: number) {
-  const action = await invoke<ImportedAction | null>('import_action_folder', { heading, kind, fps });
+export async function importActionFolder(heading: Heading) {
+  const action = await invoke<ImportedAction | null>('import_action_folder', { heading });
   return action && withFrameUrls(action);
+}
+
+export function deleteImportedAction({ id, heading }: ImportedAction) {
+  return invoke<void>('delete_imported_action', { id, heading });
 }
 
 export function loadDisabledActions(): string[] {
@@ -41,7 +44,7 @@ export function saveDisabledActions(disabled: string[]) {
   localStorage.setItem(DISABLED_KEY, JSON.stringify(disabled));
 }
 
-export function preloadImportedAction(action: ImportedAction) {
+export function preloadImportedAction(action: Pick<ImportedAction, 'frames'>) {
   action.frames.forEach(source => {
     const image = new Image();
     image.crossOrigin = 'anonymous';

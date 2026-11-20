@@ -1,48 +1,13 @@
-/** Persistent poses Elise stays in until told otherwise. */
-export type ElisePose = 'idle' | 'sit' | 'sleep';
-/** Short one-off actions that return to the current pose. */
-export type EliseAct = 'petCat' | 'surprised' | 'stand';
-/** Cat states: `sit`/`loaf`/`sleep` persist, the rest are short tricks. */
-export type CatPose = 'sit' | 'loaf' | 'sleep';
-export type CatAct = 'happy' | 'stretch' | 'roll' | 'wave' | 'surprised';
 export type Expression =
   | 'neutral' | 'happy' | 'speaking' | 'surprised' | 'sleepy' | 'shy' | 'thinking' | 'embarrassed';
 
-const elise = (name: string) => `/assets/elise/poses/${name}.png`;
-const cat = (name: string) => `/assets/cat/poses/${name}.png`;
-
-export const eliseImages: Record<ElisePose | Exclude<EliseAct, 'stand'>, string> = {
-  idle: elise('idle_front'),
-  sit: elise('sit_shy'),
-  sleep: elise('sleep'),
-  petCat: elise('pet_cat'),
-  surprised: elise('surprised'),
-};
-
-export const catImages: Record<CatPose | CatAct, string> = {
-  sit: cat('sit_neutral'),
-  happy: cat('sit_happy'),
-  loaf: cat('loaf'),
-  sleep: cat('sleep'),
-  stretch: cat('stretch'),
-  roll: cat('roll_belly'),
-  wave: cat('wave'),
-  surprised: cat('surprised'),
-};
-
-declare const __ELISE_FRAMES__: { walk: string[]; stand: string[]; front2left: string[]; left2back: string[] };
+declare const __ELISE_FRAMES__: Record<'walk' | 'stand' | 'standby' | 'front2left' | 'left2back', string[]>;
 export const ELISE_FRAMES = __ELISE_FRAMES__;
-export const CAT_WALK_IMAGES = [cat('walk_01'), cat('walk_02')];
 
 export const expression = (name: Expression) => `/assets/elise/expressions/${name}.png`;
 export const icon = (name: string) => `/assets/ui/icons/${name}.png`;
 
-export const PRELOAD = [
-  ...Object.values(eliseImages),
-  ...Object.values(catImages),
-  ...Object.values(ELISE_FRAMES).flat(),
-  ...CAT_WALK_IMAGES,
-];
+export const PRELOAD = Object.values(ELISE_FRAMES).flat();
 
 /**
  * The icon PNGs have very different amounts of empty padding. This is how much

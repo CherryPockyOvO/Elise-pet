@@ -8,6 +8,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             actions::list_imported_actions,
             actions::import_action_folder,
+            actions::delete_imported_action,
             deepseek::deepseek_has_key,
             deepseek::deepseek_save_key,
             deepseek::deepseek_remove_key,

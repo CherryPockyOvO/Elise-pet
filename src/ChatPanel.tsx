@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { expression, type Expression } from './assets';
 import { Icon } from './Icon';
+import character from './characterProfile.json';
 
 export type Message = { id: number; from: 'elise' | 'you'; text: string };
 
@@ -36,11 +37,11 @@ export function ChatPanel({ messages, typing, mood, model, error, active, onSend
   }
 
   return (
-    <section className="chat" aria-label="與 Elise 對話" onKeyDown={event => { if (event.key === 'Escape') onClose(); }}>
+    <section className="chat" aria-label={`與${character.name}對話`} onKeyDown={event => { if (event.key === 'Escape') onClose(); }}>
       <header>
         <span className="avatar" style={{ backgroundImage: `url(${expression(typing ? 'thinking' : mood)})` }} />
         <div className="chat-title">
-          <strong>Elise</strong>
+          <strong>{character.name}</strong>
           <span>{typing ? 'DeepSeek 回覆中…' : model}</span>
         </div>
         <button type="button" className="icon-button" aria-label="DeepSeek API 管理" onClick={onSettings}>
@@ -56,7 +57,7 @@ export function ChatPanel({ messages, typing, mood, model, error, active, onSend
           <p className={message.from} key={message.id}>{message.text}</p>
         ))}
         {typing && (
-          <p className="elise typing" aria-label="Elise 正在輸入">
+          <p className="elise typing" aria-label={`${character.name}正在輸入`}>
             <span /><span /><span />
           </p>
         )}
@@ -67,7 +68,7 @@ export function ChatPanel({ messages, typing, mood, model, error, active, onSend
         <input
           ref={inputRef}
           aria-label="輸入訊息"
-          placeholder="跟 Elise 說點什麼…"
+          placeholder={`跟${character.name}說點什麼…`}
           value={input}
           maxLength={2000}
           onChange={event => setInput(event.target.value)}

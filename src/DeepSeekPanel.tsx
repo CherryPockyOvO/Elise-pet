@@ -148,7 +148,7 @@ export function DeepSeekPanel({ preferences: savedPreferences, onPreferences, on
           }}>
             <p className={savedKey ? 'deepseek-state ready' : 'deepseek-state'}>
               <Icon name={savedKey ? 'heart' : 'alert'} size={16} />
-              {!native ? '請在 Elise 桌面版管理 API Key。'
+              {!native ? '請在桌面版管理 API Key。'
                 : savedKey ? 'API Key 已儲存在系統憑證中。'
                   : savedKey === null ? '正在讀取系統憑證…' : '尚未儲存 API Key。'}
             </p>

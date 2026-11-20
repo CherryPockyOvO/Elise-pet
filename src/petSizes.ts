@@ -1,10 +1,9 @@
 export const SIZE_LIMITS = {
   eliseSize: { min: 0.6, max: 1.3 },
-  catSize: { min: 0.6, max: 1.5 },
 };
 
-export type PetSizes = { eliseSize: number; catSize: number };
-export const DEFAULT_SIZES: PetSizes = { eliseSize: 1, catSize: 1 };
+export type PetSizes = { eliseSize: number };
+export const DEFAULT_SIZES: PetSizes = { eliseSize: 1 };
 const STORAGE_KEY = 'elise-pet.settings';
 
 function readSettings(): Partial<PetSizes> {
@@ -20,7 +19,6 @@ export function loadPetSizes(): PetSizes {
     const settings = readSettings();
     return {
       eliseSize: clamp(settings.eliseSize, SIZE_LIMITS.eliseSize),
-      catSize: clamp(settings.catSize, SIZE_LIMITS.catSize),
     };
   } catch {
     return DEFAULT_SIZES;

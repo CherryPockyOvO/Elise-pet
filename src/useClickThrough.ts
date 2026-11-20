@@ -7,7 +7,7 @@ import { cursorPosition, getCurrentWindow } from '@tauri-apps/api/window';
  * every click over its empty area, so the desktop underneath is unusable.
  *
  * We poll the global cursor and hit-test the page ourselves: when the cursor
- * is over a visible pixel of Elise/the cat or over a panel, the window takes
+ * is over a visible pixel of Elise or over a panel, the window takes
  * mouse input; otherwise it lets clicks fall through to whatever is below.
  */
 const POLL_MS = 60;
@@ -62,19 +62,10 @@ function hitImage(image: HTMLImageElement, x: number, y: number) {
 }
 
 function isInteractiveAt(x: number, y: number) {
-  const cat = document.querySelector<HTMLElement>('.cat:not(.hidden)');
-  const catImage = cat?.querySelector('img');
-  if (cat && catImage) {
-    const box = cat.getBoundingClientRect();
-    const overCatBox = x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
-    // A scaled cat's transparent padding can overlap Elise. Let clicks reach her underneath.
-    const pointerEvents = overCatBox && !hitImage(catImage, x, y) ? 'none' : '';
-    if (cat.style.pointerEvents !== pointerEvents) cat.style.pointerEvents = pointerEvents;
-  }
   const element = document.elementFromPoint(x, y);
   if (!element) return false;
   if (element.closest(SOLID)) return true;
-  const pet = element.closest('.character, .cat');
+  const pet = element.closest('.character');
   if (!pet) return false;
   const image = pet.querySelector('img');
   return image ? hitImage(image, x, y) : true;
@@ -91,8 +82,9 @@ export function useClickThrough() {
 
     const onDown = () => { buttonsDown = true; };
     const onUp = () => { buttonsDown = false; };
-    window.addEventListener('mousedown', onDown, true);
-    window.addEventListener('mouseup', onUp, true);
+    window.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('pointerup', onUp, true);
+    window.addEventListener('pointercancel', onUp, true);
     window.addEventListener('blur', onUp);
 
     const poll = async () => {
@@ -123,8 +115,9 @@ export function useClickThrough() {
     return () => {
       disposed = true;
       window.clearInterval(timer);
-      window.removeEventListener('mousedown', onDown, true);
-      window.removeEventListener('mouseup', onUp, true);
+      window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onUp, true);
       window.removeEventListener('blur', onUp);
       void win.setIgnoreCursorEvents(false).catch(() => undefined);
     };

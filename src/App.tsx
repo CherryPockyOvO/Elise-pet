@@ -1,46 +1,38 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import {
-  CAT_WALK_IMAGES, ELISE_FRAMES, PRELOAD, catImages, eliseImages,
-  type CatAct, type CatPose, type EliseAct, type ElisePose, type Expression,
-} from './assets';
+import { cursorPosition, getCurrentWindow, type Monitor } from '@tauri-apps/api/window';
+import { ELISE_FRAMES, PRELOAD, type Expression } from './assets';
 import { ChatPanel, type Message } from './ChatPanel';
+import { CharacterProfile } from './CharacterProfile';
+import character from './characterProfile.json';
 import { ActionPanel } from './ActionPanel';
-import { loadActionLibrary, loadDisabledActions, saveDisabledActions, type ImportedAction } from './actionLibrary';
-import { actionsForHeading, chooseAction, loadActionSettings, saveActionSettings, type ActionRow, type ActionSettings } from './actionSettings';
+import { deleteImportedAction, loadActionLibrary, loadDisabledActions, saveDisabledActions, type ImportedAction } from './actionLibrary';
+import { actionsForHeading, chooseAction, isWalkingAction, loadActionSettings, saveActionSettings, STANDBY_FPS, WALK_ACTIVITY, withoutAction, type ActionRow, type ActionSettings } from './actionSettings';
 import { DeepSeekPanel } from './DeepSeekPanel';
-import { EliseStanding } from './EliseStanding';
+import { EliseStandby } from './EliseStandby';
 import { loadPreferences, MODELS } from './deepseekPreferences';
 import { Icon } from './Icon';
 import { PetMenu, type MenuSection } from './PetMenu';
 import { loadPetSizes, storePetSizes, type PetSizes } from './petSizes';
 import { HEADING_STILLS, type Heading } from './eliseTurns';
 import { useClickThrough } from './useClickThrough';
-import { STAGE_WIDTH, useWalker, type ConfiguredWalkAction } from './useWalker';
+import { useWalker, type ConfiguredWalkAction } from './useWalker';
+import { STAGE_WIDTH, usePetDisplay } from './usePetDisplay';
 
 type Bubble = { id: number; text: string; icon?: string };
 
 const DRAG_THRESHOLD = 4;
-/** Height of the top of Elise's head above the stage bottom, per layout. */
-const HEAD_HEIGHT: Record<ElisePose, number> = { idle: 266, sit: 229, sleep: 119 };
-const BUBBLE_HEIGHT: Record<ElisePose, number> = { idle: 284, sit: 248, sleep: 140 };
+const HEAD_HEIGHT = 266;
+const BUBBLE_HEIGHT = 284;
 const SCALE_PIVOT_HEIGHT = 34;
-// The widest cat PNG extends about 50 CSS pixels right of its sprite centre.
-const CAT_ART_RADIUS = 50;
-const CAT_TRICK_MS: Record<CatAct, number> = {
-  happy: 900, stretch: 1800, roll: 2600, wave: 1800, surprised: 1200,
-};
 const randomBetween = (min: number, max: number) => min + Math.random() * (max - min);
-const CAT_ACTIVITIES = ['stretch', 'wave', 'roll', 'loaf'];
-const POKE_LINES = ['哇！嚇我一跳…', '欸？！怎、怎麼了嗎？', '呀…別突然戳我啦。'];
-const pick = <T,>(items: T[]) => items[Math.floor(Math.random() * items.length)];
 let nextId = 1;
 
 export function App() {
   const [chatOpen, setChatOpen] = useState(false);
   const [deepSeekOpen, setDeepSeekOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [importedActions, setImportedActions] = useState<ImportedAction[]>([]);
   const [disabledActions, setDisabledActions] = useState(loadDisabledActions);
   const [actionSettings, setActionSettings] = useState(loadActionSettings);
@@ -49,15 +41,10 @@ export function App() {
   const [preferences, setPreferences] = useState(loadPreferences);
   const [sizes, setSizes] = useState(loadPetSizes);
   const [messages, setMessages] = useState<Message[]>(() => [
-    { id: nextId++, from: 'elise', text: '嗨，我是 Elise Grace，叫我 Elise 就好。旁邊這隻是麻糬，牠正在假裝沒看到我們。' },
+    { id: nextId++, from: 'elise', text: `你好，我是${character.name}。叫我雫就好。今天過得還好嗎？` },
   ]);
   const [typing, setTyping] = useState(false);
   const [chatError, setChatError] = useState('');
-  const [chosenPose, setPose] = useState<ElisePose>('idle');
-  const [rest, setRest] = useState<'sit' | 'sleep' | null>(null);
-  const [act, setAct] = useState<EliseAct | null>(null);
-  const [catPose, setCatPose] = useState<CatPose>('sit');
-  const [catAct, setCatAct] = useState<CatAct | null>(null);
   const [menu, setMenu] = useState(false);
   const [bubble, setBubble] = useState<Bubble | null>(null);
   const [pressingElise, setPressingElise] = useState(false);
@@ -65,32 +52,36 @@ export function App() {
 
   const stageRef = useRef<HTMLDivElement>(null);
   const spriteRef = useRef<HTMLImageElement>(null);
-  const catRef = useRef<HTMLButtonElement>(null);
-  const catImageRef = useRef<HTMLImageElement>(null);
   const timers = useRef<Record<string, number>>({});
   const scale = useRef(sizes.eliseSize);
+  const monitor = useRef<Monitor | null>(null);
   const requestPending = useRef(false);
   const gestureCleanup = useRef<(() => void) | null>(null);
-  const standEnding = useRef<Heading | undefined>(undefined);
-  const restEnding = useRef<Heading | undefined>(undefined);
   const actionFps = useRef(actionSettings.fps);
   const walkActions = useRef<readonly ConfiguredWalkAction[]>([]);
-  const walker = useWalker({ stage: stageRef, sprite: spriteRef, cat: catRef, catImage: catImageRef, scale, walkActions, actionFps });
+  const walker = useWalker({ stage: stageRef, sprite: spriteRef, scale, monitor, walkActions, actionFps });
   const { start: startWalk, stop: stopWalk, setPaused, turnTo, perform, heading } = walker;
+  const stopMovement = useCallback(() => {
+    gestureCleanup.current?.();
+    stopWalk();
+  }, [stopWalk]);
+  const display = usePetDisplay(monitor, scale, stopMovement);
   const animated = walker.phase !== 'off';
   const walking = walker.phase === 'walk' || walker.phase === 'turn';
-  const catWalking = walker.catMoving && !(animated && walker.paused);
-  const pose = rest ?? chosenPose;
-  const interacting = menu || chatOpen || deepSeekOpen || actionsOpen || pressingElise;
+  const modalOpen = deepSeekOpen || actionsOpen || profileOpen;
+  const interacting = menu || chatOpen || modalOpen || pressingElise;
+  const configuredImports = useMemo(() => importedActions.map(action => ({
+    ...action, kind: actionSettings.kinds[action.id] ?? action.kind,
+  })), [importedActions, actionSettings.kinds]);
 
   useEffect(() => { setPaused(interacting); }, [interacting, setPaused]);
   useEffect(() => {
     actionFps.current = actionSettings.fps;
-    walkActions.current = importedActions
-      .filter(action => action.kind === 'walk' && !disabledActions.includes(action.id))
+    walkActions.current = configuredImports
+      .filter(action => action.frameCount >= 2 && action.kind === 'walk' && !disabledActions.includes(action.id))
       .map(action => ({ ...action, fps: actionSettings.fps[action.id] ?? action.fps,
         ending: actionSettings.endings[action.heading][action.id] }));
-  }, [importedActions, disabledActions, actionSettings.fps, actionSettings.endings]);
+  }, [configuredImports, disabledActions, actionSettings.fps, actionSettings.endings]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -112,7 +103,6 @@ export function App() {
     window.clearTimeout(timers.current[key]);
     timers.current[key] = window.setTimeout(run, ms);
   }, []);
-  const cancel = useCallback((key: string) => window.clearTimeout(timers.current[key]), []);
 
   useEffect(() => {
     PRELOAD.forEach(source => { new Image().src = source; });
@@ -131,64 +121,24 @@ export function App() {
     later('bubble', ms, () => setBubble(null));
   }, [later]);
 
-  const playElise = useCallback((next: EliseAct, ms: number, after?: () => void) => {
-    setAct(next);
-    later('elise', ms, () => { setAct(null); after?.(); });
-  }, [later]);
-
-  const playCat = useCallback((next: CatAct, after?: () => void) => {
-    setCatAct(next);
-    later('cat', CAT_TRICK_MS[next], () => { setCatAct(null); after?.(); });
-  }, [later]);
-
-  const finishStanding = useCallback(() => {
-    setAct(null);
-    if (standEnding.current) turnTo(standEnding.current);
-    standEnding.current = undefined;
-  }, [turnTo]);
-
-  const resetActs = useCallback(() => {
-    cancel('elise');
-    cancel('cat');
-    standEnding.current = undefined;
-    restEnding.current = undefined;
-    setAct(null);
-    setCatAct(null);
-  }, [cancel]);
-
-  // Voluntary rests are temporary. User-selected sitting and sleeping stay in place.
-  useEffect(() => {
-    if (!rest || interacting) return;
-    const delay = rest === 'sit' ? randomBetween(7_000, 13_000) : randomBetween(15_000, 25_000);
-    const id = window.setTimeout(() => {
-      setRest(null);
-      if (restEnding.current) turnTo(restEnding.current);
-      restEnding.current = undefined;
-    }, delay);
-    return () => window.clearTimeout(id);
-  }, [rest, interacting, turnTo]);
-
-  const runAction = useCallback((row: ActionRow, from: Heading, preview = false) => {
+  const runAction = useCallback((row: ActionRow, from: Heading) => {
     const end = actionSettings.endings[from][row.id];
-    const finish = () => { if (end) turnTo(end); };
     if (row.source === 'imported') {
       const action = { ...row.action, fps: actionSettings.fps[row.id] ?? row.action.fps };
-      if (action.kind === 'walk' && !preview && (from === 'left' || from === 'right')) {
-        void startWalk(randomBetween(75, 390), { action, ending: end, preferred: from });
-      } else {
-        // The imported artwork itself ends in the configured orientation.
-        perform(action, end ?? action.heading);
-      }
+      // The imported artwork itself ends in the configured orientation.
+      perform(action, end ?? action.heading);
       return;
     }
     switch (row.id) {
       case 'stand':
-        standEnding.current = end;
-        setAct('stand');
+      case 'standby':
+        perform({ frames: ELISE_FRAMES[row.id], heading: 'front', fps: actionSettings.fps[row.id] ?? row.defaultFps },
+          end ?? 'front', 'front');
         break;
       case 'walk':
-        void startWalk(randomBetween(75, 390), { ending: end,
-          preferred: preview && (from === 'left' || from === 'right') ? from : undefined });
+        void startWalk(randomBetween(75, 390), {
+          ending: end, preferred: from === 'left' || from === 'right' ? from : undefined, builtIn: true,
+        });
         break;
       case 'front2left': {
         const side = end === 'left' || end === 'right' ? end : Math.random() < 0.5 ? 'left' : 'right';
@@ -202,129 +152,44 @@ export function App() {
         turnTo(end ?? to, { from, to });
         break;
       }
-      case 'sit':
-      case 'sleep':
-        restEnding.current = end;
-        setRest(row.id);
-        break;
-      case 'petCat': playElise('petCat', 2800, () => { playCat('happy'); finish(); }); break;
-      case 'surprised': playElise('surprised', 1400, finish); break;
-      case 'loaf':
-        setCatPose(current => current === 'loaf' ? 'sit' : 'loaf');
-        finish();
-        break;
-      default: playCat(row.id, finish);
     }
-  }, [actionSettings, perform, playCat, playElise, startWalk, turnTo]);
+  }, [actionSettings, perform, startWalk, turnTo]);
 
-  const calm = !interacting && !animated && !catWalking && !rest && !act && !catAct && !bubble && pose !== 'sleep';
+  const calm = !interacting && !animated && !bubble;
   useEffect(() => {
     if (!calm) return;
-    const rows = actionsForHeading(heading, importedActions);
-    const delay = pose === 'sit' ? randomBetween(18_000, 32_000) : randomBetween(8_000, 16_000);
+    const rows = actionsForHeading(heading, configuredImports).filter(row => !isWalkingAction(row));
+    const walkChance = WALK_ACTIVITY[actionSettings.walkActivity].chance / 100;
+    const delay = randomBetween(8_000, 16_000);
     const id = window.setTimeout(() => {
       const row = chooseAction(rows, actionSettings.chances[heading], Math.random());
-      // Disabled imports and explicit seated poses leave their allocated slots idle.
-      if (row && (row.source === 'built-in' || !disabledActions.includes(row.id)) &&
-        (pose !== 'sit' || row.source === 'built-in' && CAT_ACTIVITIES.includes(row.id))) {
+      if (row?.source === 'built-in' && row.id === 'stand') {
+        runAction(row, heading);
+      } else if (Math.random() < walkChance) {
+        void startWalk(randomBetween(75, 390), { ending: actionSettings.endings[heading].walk });
+      } else if (row && (row.source === 'built-in' || !disabledActions.includes(row.id))) {
         runAction(row, heading);
       }
       setActivityRound(round => round + 1);
     }, delay);
     return () => window.clearTimeout(id);
-  }, [activityRound, calm, pose, heading, actionSettings.chances, disabledActions, importedActions, runAction]);
-
-  function poke() {
-    if (act === 'petCat') return;
-    stopWalk('front');
-    setRest(null);
-    resetActs();
-    if (pose === 'sleep') {
-      setPose('idle');
-      setCatPose('sit');
-      say('嗯…？我醒了…', 'question');
-      if (actionSettings.endings.front.sleep) turnTo(actionSettings.endings.front.sleep);
-      return;
-    }
-    playElise('surprised', 1400, () => {
-      if (actionSettings.endings.front.surprised) turnTo(actionSettings.endings.front.surprised);
-    });
-    playCat('surprised');
-    say(pick(POKE_LINES), 'exclamation', 2200);
-  }
-
-  function petCat() {
-    stopWalk('front');
-    setRest(null);
-    resetActs();
-    setPose('idle');
-    setCatPose('sit');
-    say('乖～乖～', 'heart', 3000);
-    playElise('petCat', 3200, () => {
-      playCat('happy');
-      if (actionSettings.endings.front.petCat) turnTo(actionSettings.endings.front.petCat);
-    });
-  }
+  }, [activityRound, calm, heading, actionSettings.chances, actionSettings.endings, actionSettings.walkActivity,
+    disabledActions, configuredImports, runAction, startWalk]);
 
   function toggleWalking() {
-    resetActs();
-    setRest(null);
-    setPose('idle');
-    setCatPose('sit');
     if (walking) {
       stopWalk('finish-walk');
     } else {
+      stopWalk();
       void startWalk(undefined, { ending: actionSettings.endings[heading].walk });
-      say('我們出發吧～', 'paw_print', 2000);
+      say('出發散步吧～', 'play', 2000);
     }
-  }
-
-  function toggleSit() {
-    stopWalk('front');
-    setRest(null);
-    resetActs();
-    setPose(pose === 'sit' ? 'idle' : 'sit');
-    setCatPose(current => (current === 'sleep' ? 'sit' : current));
-    if (pose === 'sit' && actionSettings.endings.front.sit) turnTo(actionSettings.endings.front.sit);
-  }
-
-  function toggleSleep() {
-    stopWalk('front');
-    setRest(null);
-    resetActs();
-    const sleeping = pose !== 'sleep';
-    setPose(sleeping ? 'sleep' : 'idle');
-    setCatPose(sleeping ? 'sleep' : 'sit');
-    if (sleeping) say('晚安…', 'sleep_zzz', 2400);
-    else {
-      say('早安～睡得好飽。', 'sparkles', 2400);
-      if (actionSettings.endings.front.sleep) turnTo(actionSettings.endings.front.sleep);
-    }
-  }
-
-  function catTrick(trick: CatAct) {
-    if (walking) return;
-    if (act === 'petCat') resetActs();
-    setCatPose(current => (current === 'sleep' && pose !== 'sleep' ? 'sit' : current));
-    playCat(trick, () => {
-      const ending = actionSettings.endings[heading][trick];
-      if (ending && pose === 'idle') turnTo(ending);
-    });
-  }
-
-  function toggleLoaf() {
-    if (walking) return;
-    cancel('cat');
-    setCatAct(null);
-    setCatPose(current => (current === 'loaf' ? 'sit' : 'loaf'));
-    const ending = actionSettings.endings[heading].loaf;
-    if (ending && pose === 'idle') turnTo(ending);
   }
 
   async function sendMessage(text: string) {
     if (requestPending.current) return false;
     if (!isTauri()) {
-      setChatError('請在 Elise 桌面版使用 DeepSeek 聊天。');
+      setChatError('請在桌面版使用 DeepSeek 聊天。');
       return false;
     }
 
@@ -369,14 +234,9 @@ export function App() {
   }
 
   function previewAction(action: ActionRow, from: Heading) {
-    stopWalk(action.source === 'built-in' && ['stand', 'sit', 'sleep', 'petCat', 'surprised'].includes(action.id)
-      ? 'front' : 'keep');
-    resetActs();
-    setRest(null);
-    setPose('idle');
-    setCatPose(current => current === 'sleep' ? 'sit' : current);
+    stopWalk();
     setActionsOpen(false);
-    runAction(action, from, true);
+    runAction(action, from);
   }
 
   function updateActionSettings(next: ActionSettings) {
@@ -384,42 +244,89 @@ export function App() {
     setActionSettings(next);
   }
 
+  async function removeAction(action: ImportedAction) {
+    await deleteImportedAction(action);
+    setImportedActions(current => current.filter(item => item.id !== action.id));
+    const settings = withoutAction(actionSettings, action);
+    const disabled = disabledActions.filter(id => id !== action.id);
+    setActionSettings(settings);
+    setDisabledActions(disabled);
+    try {
+      saveActionSettings(settings);
+      saveDisabledActions(disabled);
+    } catch {
+      setActionStorageError('動作已刪除，但無法儲存本機動作設定。');
+    }
+  }
+
   function updateSizes(next: PetSizes) {
     scale.current = next.eliseSize;
     setSizes(next);
     storePetSizes(next);
+    const selected = monitor.current;
+    if (selected) {
+      void getCurrentWindow().outerPosition().then(origin => {
+        if (monitor.current === selected && scale.current === next.eliseSize) {
+          return display.movePet(selected, origin.x, display.petTop(selected, origin.y));
+        }
+      }).catch(() => undefined);
+    }
   }
 
-  function pressElise(event: ReactMouseEvent<HTMLButtonElement>) {
-    if (event.button !== 0) return;
+  function pressElise(event: ReactPointerEvent<HTMLButtonElement>) {
+    const selected = monitor.current;
+    if (event.button !== 0 || !event.isPrimary || !selected) return;
     event.preventDefault();
     gestureCleanup.current?.();
     setPressingElise(true);
     setMenu(false);
-    const startX = event.screenX;
-    const startY = event.screenY;
+    const target = event.currentTarget;
+    const pointer = event.pointerId;
+    const { screenX, screenY, clientX, clientY } = event;
+    const grabX = clientX * selected.scaleFactor;
+    const grabFromPetTop = clientY * selected.scaleFactor - display.petTop(selected, 0);
+    let dragging = false;
+    let moving = false;
+    let pending = false;
+    let active = true;
+    target.setPointerCapture(pointer);
+
     const cleanup = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      active = false;
+      target.removeEventListener('pointermove', onMove);
+      target.removeEventListener('lostpointercapture', cleanup);
       window.removeEventListener('blur', cleanup);
+      if (target.hasPointerCapture(pointer)) target.releasePointerCapture(pointer);
       gestureCleanup.current = null;
       setPressingElise(false);
     };
-    const onMove = (move: MouseEvent) => {
-      if (Math.hypot(move.screenX - startX, move.screenY - startY) < DRAG_THRESHOLD) return;
-      cleanup();
-      // Dragging and walking both move the window; dragging wins.
-      stopWalk();
-      getCurrentWindow().startDragging().catch(() => {
-        // Browser-only preview does not support native window dragging.
-      });
+    const moveToCursor = async () => {
+      if (moving) return;
+      moving = true;
+      try {
+        while (active && pending) {
+          pending = false;
+          const cursor = await cursorPosition();
+          if (active) await display.movePet(selected, cursor.x - grabX, cursor.y - grabFromPetTop);
+        }
+      } catch {
+        cleanup();
+      } finally {
+        moving = false;
+      }
     };
-    const onUp = () => {
-      cleanup();
-      poke();
+    const onMove = (move: PointerEvent) => {
+      if (move.pointerId !== pointer) return;
+      if (!dragging) {
+        if (Math.hypot(move.screenX - screenX, move.screenY - screenY) < DRAG_THRESHOLD) return;
+        dragging = true;
+        stopWalk();
+      }
+      pending = true;
+      void moveToCursor();
     };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    target.addEventListener('pointermove', onMove);
+    target.addEventListener('lostpointercapture', cleanup);
     window.addEventListener('blur', cleanup);
     gestureCleanup.current = cleanup;
   }
@@ -427,7 +334,7 @@ export function App() {
   function openMenu(event: ReactMouseEvent) {
     event.preventDefault();
     event.stopPropagation();
-    if (!deepSeekOpen && !actionsOpen) setMenu(true);
+    if (!modalOpen) setMenu(true);
   }
 
   function choose(action: () => void) {
@@ -437,63 +344,35 @@ export function App() {
     };
   }
 
-  const mood: Expression =
-    act === 'surprised' ? 'surprised'
-      : act === 'petCat' || walking ? 'happy'
-        : pose === 'sleep' ? 'sleepy'
-          : pose === 'sit' ? 'shy'
-            : typing ? 'speaking' : 'neutral';
+  const mood: Expression = walking ? 'happy' : typing ? 'speaking' : 'neutral';
 
   const status =
-    walking ? (walker.paused ? '散步暫停中' : walker.phase === 'turn' ? '先轉個身…' : '和小貓散步中…')
+    walking ? (walker.paused ? '散步暫停中' : walker.phase === 'turn' ? '先轉個身…' : '散步中…')
       : walker.phase === 'look' ? '正在四處看看…'
         : walker.phase === 'perform' ? '正在做動作…'
-      : act === 'petCat' ? '正在摸摸小貓'
-        : pose === 'sleep' ? '睡著了 Zzz'
-          : pose === 'sit' ? '安靜地坐著'
-            : '陪在你身邊';
+          : '陪在你身邊';
 
   const sections: MenuSection[] = [
     {
-      title: 'Elise',
+      title: character.name,
       items: [
         { id: 'chat', label: '聊天', icon: 'chat_heart', active: chatOpen, onSelect: choose(() => setChatOpen(true)) },
         { id: 'walk', label: walking ? '停下' : '散步', icon: walking ? 'pause' : 'play', active: walking, onSelect: choose(toggleWalking) },
-        { id: 'sit', label: pose === 'sit' ? '站起來' : '坐下', icon: pose === 'sit' ? 'chevrons_up' : 'home', active: pose === 'sit', onSelect: choose(toggleSit) },
-        { id: 'sleep', label: pose === 'sleep' ? '醒來' : '睡覺', icon: pose === 'sleep' ? 'sparkles' : 'sleep_zzz', active: pose === 'sleep', onSelect: choose(toggleSleep) },
-        { id: 'poke', label: '戳一下', icon: 'exclamation', disabled: act === 'petCat', onSelect: choose(poke) },
-      ],
-    },
-    {
-      title: '小貓',
-      items: [
-        { id: 'pet', label: '摸摸', icon: 'paw_print', onSelect: choose(petCat) },
-        { id: 'roll', label: '打滾', icon: 'spiral', disabled: walking, onSelect: choose(() => catTrick('roll')) },
-        { id: 'wave', label: '揮手', icon: 'heart_sparkle', disabled: walking, onSelect: choose(() => catTrick('wave')) },
-        { id: 'stretch', label: '伸懶腰', icon: 'star', disabled: walking, onSelect: choose(() => catTrick('stretch')) },
-        { id: 'loaf', label: catPose === 'loaf' ? '坐好' : '趴下', icon: 'heart', active: catPose === 'loaf', disabled: walking, onSelect: choose(toggleLoaf) },
+        { id: 'profile', label: '角色設定檔', icon: 'bookmark', onSelect: choose(() => setProfileOpen(true)) },
       ],
     },
   ];
 
-  const stillPose = act ?? pose;
-  const facingStill = stillPose === 'idle' && heading !== 'front' ? HEADING_STILLS[heading] : null;
-  const layout = animated || act ? 'idle' : pose;
-  const catState = catWalking ? 'walk' : catAct ?? (pose === 'sleep' ? 'sleep' : catPose);
-  const catHidden = act === 'petCat';
-  const pivot = layout === 'sleep' ? 42 : SCALE_PIVOT_HEIGHT;
-  const catCenterOffset = layout === 'sleep' ? 147.5 : 91.5;
-  const rightmostCatPixel = STAGE_WIDTH / 2 + (catCenterOffset + CAT_ART_RADIUS * sizes.catSize) * sizes.eliseSize;
-  const shiftLeft = Math.max(0, rightmostCatPixel - (STAGE_WIDTH - 8));
-  const menuBottom = pivot + (HEAD_HEIGHT[layout] - pivot) * sizes.eliseSize + 12;
+  const facingStill = heading !== 'front' ? HEADING_STILLS[heading] : null;
+  const pivot = SCALE_PIVOT_HEIGHT;
+  const menuBottom = pivot + (HEAD_HEIGHT - pivot) * sizes.eliseSize + 12 - display.offset;
   const bubbleStyle = {
-    bottom: pivot + (BUBBLE_HEIGHT[layout] - pivot) * sizes.eliseSize,
-    left: STAGE_WIDTH / 2 - shiftLeft - (layout === 'sleep' ? 30 * sizes.eliseSize : 0),
+    bottom: `min(${pivot + (BUBBLE_HEIGHT - pivot) * sizes.eliseSize - display.offset}px, max(8px, calc(100% - 85px)))`,
+    left: STAGE_WIDTH / 2,
   };
   const petStyle = {
-    left: 65 - shiftLeft,
     '--elise-scale': sizes.eliseSize,
-    '--cat-scale': sizes.catSize,
+    '--pet-offset': `${display.offset}px`,
   } as CSSProperties;
 
   return (
@@ -504,26 +383,27 @@ export function App() {
       }}
     >
       <div className="stage" ref={stageRef} style={{ width: STAGE_WIDTH }}>
+        {profileOpen && <CharacterProfile onClose={() => setProfileOpen(false)} />}
         {deepSeekOpen && (
           <DeepSeekPanel preferences={preferences} onPreferences={setPreferences}
             onClose={() => setDeepSeekOpen(false)} />
         )}
         {actionsOpen && (
-          <ActionPanel actions={importedActions} disabled={disabledActions} loading={actionsLoading}
+          <ActionPanel actions={configuredImports} disabled={disabledActions} loading={actionsLoading}
             storageError={actionStorageError} settings={actionSettings} onSettings={updateActionSettings}
             onAdd={action => setImportedActions(current => current.some(item => item.id === action.id)
               ? current : [...current, action])}
-            onToggle={toggleImportedAction} onPreview={previewAction} onClose={() => setActionsOpen(false)} />
+            onToggle={toggleImportedAction} onDelete={removeAction} onPreview={previewAction} onClose={() => setActionsOpen(false)} />
         )}
         {chatOpen && (
-          <div hidden={deepSeekOpen || actionsOpen}>
+          <div hidden={modalOpen}>
             <ChatPanel
               messages={messages}
               typing={typing}
               mood={mood}
               model={MODELS[preferences.model]}
               error={chatError}
-              active={!deepSeekOpen && !actionsOpen}
+              active={!modalOpen}
               onSettings={openDeepSeek}
               onSend={sendMessage}
               onClose={() => setChatOpen(false)}
@@ -531,58 +411,31 @@ export function App() {
           </div>
         )}
 
-        {bubble && !chatOpen && !menu && !deepSeekOpen && !actionsOpen && (
+        {bubble && !chatOpen && !menu && !modalOpen && (
           <div className="bubble" style={bubbleStyle} key={bubble.id} role="status">
             {bubble.icon && <Icon name={bubble.icon} size={18} />}
             <span>{bubble.text}</span>
           </div>
         )}
 
-        <div className={`pet-group pose-${layout} ${walking ? 'walking' : ''}`} style={petStyle}>
-          <div className="elise-shell">
-            <button
-              className={`character ${walking ? 'walk' : act ?? pose}`}
-              data-heading={heading}
-              onMouseDown={pressElise}
-              onContextMenu={openMenu}
-              title="點一下戳戳 Elise · 按住拖動 · 右鍵開啟選單"
-              aria-label="Elise：點擊互動，按住拖動，右鍵開啟選單"
-            >
-              {animated ? (
-                <img className={`elise-cycle ${walker.phase === 'walk' ? 'walk-sprite' : 'turn-sprite'}`}
-                  ref={walker.spriteRef} crossOrigin="anonymous" src={ELISE_FRAMES.front2left[0]} alt="Elise" draggable={false} />
-              ) : stillPose === 'stand' ? (
-                <EliseStanding fps={actionSettings.fps.stand ?? 10} onComplete={finishStanding} />
-              ) : (
-                <img key={stillPose} src={facingStill?.source ?? eliseImages[stillPose]}
-                  style={facingStill ? { transform: `translateY(${facingStill.footOffset}px) scaleX(${facingStill.mirrored ? -1 : 1})` } : undefined}
-                  alt="Elise Q 版角色" draggable={false} />
-              )}
-              {!walking && pose === 'sleep' && !act && <span className="zzz" aria-hidden="true">Z<small>z</small><small>z</small></span>}
-            </button>
-          </div>
-
+        <div className="pet-group" style={petStyle}>
           <button
-            ref={catRef}
-            className={`cat ${catState} ${catHidden ? 'hidden' : ''}`}
-            onClick={() => {
-              if (catHidden) return;
-              stopWalk();
-              playCat('happy');
-              say('小貓很喜歡你摸摸牠～', 'paw_print', 2400);
-            }}
+            className={`character ${walking ? 'walk' : walker.phase}`}
+            data-heading={heading}
+            onPointerDown={pressElise}
             onContextMenu={openMenu}
-            title="左鍵摸貓 · 右鍵開啟選單"
-            aria-label="灰白貓咪"
-            aria-hidden={catHidden}
-            tabIndex={catHidden ? -1 : 0}
+            title="按住拖動 · 右鍵開啟選單"
+            aria-label={`${character.name}，按住拖動，右鍵開啟選單`}
           >
-            <img
-              ref={catImageRef}
-              src={catWalking ? CAT_WALK_IMAGES[0] : catImages[catState as CatPose | CatAct]}
-              alt="灰白貓咪"
-              draggable={false}
-            />
+            {animated ? (
+              <img className={`elise-cycle ${walker.phase === 'walk' ? 'walk-sprite' : 'turn-sprite'}`}
+                ref={walker.spriteRef} crossOrigin="anonymous" src={ELISE_FRAMES.front2left[0]} alt={character.name} draggable={false} />
+            ) : facingStill ? (
+              <img src={facingStill.source} style={facingStill.mirrored ? { transform: 'scaleX(-1)' } : undefined}
+                alt={character.name} draggable={false} />
+            ) : (
+              <EliseStandby fps={actionSettings.fps.standby ?? STANDBY_FPS} />
+            )}
           </button>
         </div>
 
@@ -595,6 +448,7 @@ export function App() {
             onClose={() => setMenu(false)}
             sizes={sizes}
             onSizes={updateSizes}
+            display={display}
             onActions={openActions}
             onDeepSeek={openDeepSeek}
             onExit={choose(() => { void getCurrentWindow().close(); })}

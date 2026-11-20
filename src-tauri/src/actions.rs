@@ -11,6 +11,7 @@ use tauri_plugin_dialog::DialogExt;
 const MAX_FRAMES: usize = 300;
 const MAX_BYTES: u64 = 100 * 1024 * 1024;
 const STORAGE_ERROR: &str = "無法存取本機動作資料夾。";
+const DELETE_ERROR: &str = "無法刪除這個匯入動作。";
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -48,7 +49,6 @@ struct Metadata {
     kind: ActionKind,
     fps: u8,
     frame_count: usize,
-    foot_offset: f32,
 }
 
 #[derive(Serialize)]
@@ -112,7 +112,7 @@ pub async fn list_imported_actions(app: AppHandle) -> Result<Vec<ImportedAction>
                 let Ok(metadata) = serde_json::from_reader::<_, Metadata>(file) else {
                     continue;
                 };
-                if !(1..=MAX_FRAMES).contains(&metadata.frame_count)
+                if !(2..=MAX_FRAMES).contains(&metadata.frame_count)
                     || !(1..=30).contains(&metadata.fps)
                 {
                     continue;
@@ -130,36 +130,18 @@ pub async fn list_imported_actions(app: AppHandle) -> Result<Vec<ImportedAction>
     .map_err(|_| STORAGE_ERROR)?
 }
 
-fn inspect_png(bytes: &[u8]) -> Result<((u32, u32), f32), &'static str> {
-    let mut decoder = png::Decoder::new(Cursor::new(bytes));
-    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+fn inspect_png(bytes: &[u8]) -> Result<(u32, u32), &'static str> {
+    let decoder = png::Decoder::new(Cursor::new(bytes));
     let mut reader = decoder.read_info().map_err(|_| "不是有效的 PNG。")?;
     let dimensions = reader.info().size();
     if dimensions.0 > 2048 || dimensions.1 > 2048 {
         return Err("尺寸需在 2048 × 2048 以內。");
     }
     let mut decoded = vec![0; reader.output_buffer_size().ok_or("圖片尺寸過大。")?];
-    let info = reader
+    reader
         .next_frame(&mut decoded)
         .map_err(|_| "無法讀取 PNG 幀。")?;
-    let channels = match info.color_type {
-        png::ColorType::Rgba => 4,
-        png::ColorType::GrayscaleAlpha => 2,
-        _ => return Ok((dimensions, 0.0)),
-    };
-    let visible_row = decoded[..info.buffer_size()]
-        .chunks_exact(info.line_size)
-        .rposition(|row| {
-            row.chunks_exact(channels)
-                .any(|pixel| pixel[channels - 1] > 24)
-        });
-    let offset = visible_row.map_or(0.0, |row| {
-        let drawn_height =
-            (290.0 / dimensions.0 as f32).min(360.0 / dimensions.1 as f32) * dimensions.1 as f32;
-        (593.0 / 640.0 - 0.5) * 290.0
-            - ((row + 1) as f32 / dimensions.1 as f32 - 0.5) * drawn_height
-    });
-    Ok((dimensions, offset))
+    Ok(dimensions)
 }
 
 fn copy_action(
@@ -184,8 +166,8 @@ fn copy_action(
             }
         }
     }
-    if files.is_empty() {
-        return Err("請選擇直接放有 PNG 幀的資料夾。".into());
+    if files.len() < 2 {
+        return Err("請選擇直接放有至少 2 張 PNG 幀的資料夾。".into());
     }
     files.sort_by(|a, b| natord::compare(&a.0, &b.0).then_with(|| a.0.cmp(&b.0)));
 
@@ -201,7 +183,6 @@ fn copy_action(
         .to_string_lossy();
     let target = direction.join(format!("action-{}", suffix.trim_start_matches(".import-")));
     let mut canvas = None;
-    let mut foot_offset = 0.0;
     let mut remaining = MAX_BYTES;
     for (index, (name, path)) in files.iter().enumerate() {
         let mut bytes = Vec::new();
@@ -214,15 +195,13 @@ fn copy_action(
             return Err("單個動作的 PNG 總大小最多為 100 MB。".into());
         }
         remaining -= bytes.len() as u64;
-        let (dimensions, offset) =
-            inspect_png(&bytes).map_err(|reason| format!("{name} {reason}"))?;
+        let dimensions = inspect_png(&bytes).map_err(|reason| format!("{name} {reason}"))?;
         if let Some(previous) = canvas {
             if previous != dimensions {
                 return Err("同一個動作的 PNG 必須使用相同的畫布尺寸。".into());
             }
         } else {
             canvas = Some(dimensions);
-            foot_offset = offset;
         }
         fs::write(frame_path(staging.path(), index), bytes).map_err(|_| STORAGE_ERROR)?;
     }
@@ -238,7 +217,6 @@ fn copy_action(
         kind,
         fps,
         frame_count: files.len(),
-        foot_offset,
     };
     let file = File::create(staging.path().join("action.json")).map_err(|_| STORAGE_ERROR)?;
     serde_json::to_writer(file, &metadata).map_err(|_| STORAGE_ERROR)?;
@@ -251,15 +229,7 @@ pub async fn import_action_folder(
     app: AppHandle,
     window: WebviewWindow,
     heading: Heading,
-    kind: ActionKind,
-    fps: u8,
 ) -> Result<Option<ImportedAction>, String> {
-    if !(1..=30).contains(&fps) {
-        return Err("播放速度需介於 1 到 30 FPS。".into());
-    }
-    if matches!(kind, ActionKind::Walk) && !matches!(heading, Heading::Left | Heading::Right) {
-        return Err("散步幀只能匯入左側或右側。".into());
-    }
     let Some(selected) = app
         .dialog()
         .file()
@@ -271,7 +241,64 @@ pub async fn import_action_folder(
     };
     let source = selected.into_path().map_err(|_| "無法讀取選取的資料夾。")?;
     tauri::async_runtime::spawn_blocking(move || {
-        copy_action(&actions_root(&app)?, &source, heading, kind, fps).map(Some)
+        copy_action(
+            &actions_root(&app)?,
+            &source,
+            heading,
+            ActionKind::Gesture,
+            10,
+        )
+        .map(Some)
+    })
+    .await
+    .map_err(|_| STORAGE_ERROR)?
+}
+
+fn delete_action(root: &Path, heading: Heading, id: &str) -> Result<(), &'static str> {
+    if !id.strip_prefix("action-").is_some_and(|suffix| {
+        !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    }) {
+        return Err(DELETE_ERROR);
+    }
+
+    let parent = root.parent().ok_or(DELETE_ERROR)?;
+    let direction = fs::canonicalize(parent)
+        .map_err(|_| DELETE_ERROR)?
+        .join("actions")
+        .join(heading.folder());
+    if fs::canonicalize(&direction).map_err(|_| DELETE_ERROR)? != direction {
+        return Err(DELETE_ERROR);
+    }
+
+    let folder = direction.join(id);
+    match fs::symlink_metadata(&folder) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Ok(metadata) if metadata.file_type().is_dir() => (),
+        _ => return Err(DELETE_ERROR),
+    }
+    if fs::canonicalize(&folder).map_err(|_| DELETE_ERROR)? != folder
+        || !folder.join("action.json").is_file()
+    {
+        return Err(DELETE_ERROR);
+    }
+
+    // Remove the action from the library in one rename, then let TempDir clean up the frames.
+    let trash = tempfile::Builder::new()
+        .prefix(".delete-")
+        .tempdir_in(&direction)
+        .map_err(|_| DELETE_ERROR)?;
+    fs::rename(folder, trash.path().join(id)).map_err(|_| DELETE_ERROR)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_imported_action(
+    app: AppHandle,
+    heading: Heading,
+    id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_action(&actions_root(&app)?, heading, &id).map_err(str::to_owned)
     })
     .await
     .map_err(|_| STORAGE_ERROR)?
@@ -339,5 +366,46 @@ mod tests {
         )
         .is_err());
         assert_eq!(fs::read_dir(direction).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn requires_multiple_frames_and_deletes_only_the_library_copy() {
+        let workspace = tempfile::tempdir().unwrap();
+        let root = workspace.path().join("actions");
+        let direction = root.join("front");
+        fs::create_dir_all(&direction).unwrap();
+        let source = tempfile::tempdir().unwrap();
+        let first = source.path().join("frame_1.png");
+        let second = source.path().join("frame_2.png");
+        png_file(&first, 255);
+        assert!(copy_action(
+            &root,
+            source.path(),
+            Heading::Front,
+            ActionKind::Gesture,
+            10
+        )
+        .is_err());
+
+        png_file(&second, 50);
+        let import = || {
+            copy_action(
+                &root,
+                source.path(),
+                Heading::Front,
+                ActionKind::Gesture,
+                10,
+            )
+            .unwrap()
+        };
+        let action = import();
+        let other = import();
+        assert!(delete_action(&root, Heading::Front, "action-../elsewhere").is_err());
+        delete_action(&root, Heading::Front, &action.id).unwrap();
+        delete_action(&root, Heading::Front, &action.id).unwrap();
+        assert!(!direction.join(action.id).exists());
+        assert_eq!(fs::read_dir(direction).unwrap().count(), 1);
+        assert!(other.frames.iter().all(|path| path.is_file()));
+        assert!(first.is_file() && second.is_file());
     }
 }

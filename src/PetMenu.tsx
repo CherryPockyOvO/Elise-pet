@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { expression, type Expression } from './assets';
 import { Icon } from './Icon';
 import { DEFAULT_SIZES, SIZE_LIMITS, type PetSizes } from './petSizes';
+import { displayId, type usePetDisplay } from './usePetDisplay';
+import character from './characterProfile.json';
 
 export type MenuItem = {
   id: string;
@@ -22,6 +24,7 @@ type Props = {
   sections: MenuSection[];
   sizes: PetSizes;
   onSizes: (sizes: PetSizes) => void;
+  display: Pick<ReturnType<typeof usePetDisplay>, 'displays' | 'selected' | 'error' | 'refresh'>;
   onActions: () => void;
   onDeepSeek: () => void;
   onExit: () => void;
@@ -30,17 +33,18 @@ type Props = {
 
 export const MENU_WIDTH = 276;
 
-export function PetMenu({ bottom, status, mood, sections, sizes, onSizes, onActions, onDeepSeek, onExit, onClose }: Props) {
+export function PetMenu({ bottom, status, mood, sections, sizes, onSizes, display, onActions, onDeepSeek, onExit, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const [sizesOpen, setSizesOpen] = useState(false);
+  const [page, setPage] = useState<'menu' | 'size' | 'display'>('menu');
 
   useEffect(() => {
-    const target = sizesOpen ? 'input[type="range"]' : '.menu-tile:not(:disabled)';
+    const target = page === 'size' ? 'input[type="range"]' : page === 'display' ? 'select' : '.menu-tile:not(:disabled)';
     ref.current?.querySelector<HTMLElement>(target)?.focus({ preventScroll: true });
-  }, [sizesOpen]);
+  }, [page]);
 
+  const menuBottom = `clamp(8px, ${bottom}px, max(8px, 100% - 312px))`;
   const style: CSSProperties = {
-    ...(sizesOpen ? { top: 78 } : { bottom }),
+    ...(page === 'menu' ? { bottom: menuBottom, maxHeight: `calc(100% - ${menuBottom} - 12px)` } : { top: 12 }),
     width: MENU_WIDTH,
     marginLeft: -MENU_WIDTH / 2,
   };
@@ -49,8 +53,8 @@ export function PetMenu({ bottom, status, mood, sections, sizes, onSizes, onActi
     <div
       ref={ref}
       className="pet-menu"
-      role={sizesOpen ? 'dialog' : 'menu'}
-      aria-label={sizesOpen ? '角色大小' : 'Elise 選單'}
+      role={page === 'menu' ? 'menu' : 'dialog'}
+      aria-label={page === 'size' ? '角色大小' : page === 'display' ? '螢幕設定' : `${character.name}選單`}
       style={style}
       onContextMenu={event => event.preventDefault()}
       onKeyDown={event => { if (event.key === 'Escape') onClose(); }}
@@ -58,20 +62,37 @@ export function PetMenu({ bottom, status, mood, sections, sizes, onSizes, onActi
       <header className="menu-header">
         <span className="avatar" style={{ backgroundImage: `url(${expression(mood)})` }} />
         <div>
-          <div className="menu-name">Elise <span aria-hidden="true">♡</span></div>
+          <div className="menu-name">{character.name} <span aria-hidden="true">♡</span></div>
           <div className="menu-status">{status}</div>
         </div>
       </header>
 
-      {sizesOpen ? (
+      {page === 'size' ? (
         <div className="pet-sizes">
-          <SizeSlider label="Elise 大小" value={sizes.eliseSize} limits={SIZE_LIMITS.eliseSize}
+          <SizeSlider label="角色大小" value={sizes.eliseSize} limits={SIZE_LIMITS.eliseSize}
             onChange={eliseSize => onSizes({ ...sizes, eliseSize })} />
-          <SizeSlider label="小貓相對大小" value={sizes.catSize} limits={SIZE_LIMITS.catSize}
-            onChange={catSize => onSizes({ ...sizes, catSize })} />
           <div className="pet-size-actions">
             <button type="button" onClick={() => onSizes(DEFAULT_SIZES)}>恢復預設</button>
-            <button type="button" onClick={() => setSizesOpen(false)}>返回選單</button>
+            <button type="button" onClick={() => setPage('menu')}>返回選單</button>
+          </div>
+        </div>
+      ) : page === 'display' ? (
+        <div className="pet-sizes pet-display">
+          <label>
+            顯示螢幕
+            <select value={display.selected} disabled={!display.displays.length}
+              onChange={event => void display.refresh(event.target.value)}>
+              {!display.selected && <option value="">選擇螢幕</option>}
+              {display.displays.map((screen, index) => (
+                <option key={displayId(screen)} value={displayId(screen)}>
+                  {screen.name?.split('\\').pop() || `螢幕 ${index + 1}`} · {screen.size.width} × {screen.size.height}
+                </option>
+              ))}
+            </select>
+          </label>
+          {display.error && <p className="deepseek-error" role="alert">{display.error}</p>}
+          <div className="pet-size-actions">
+            <button type="button" onClick={() => setPage('menu')}>返回選單</button>
           </div>
         </div>
       ) : (
@@ -97,8 +118,11 @@ export function PetMenu({ bottom, status, mood, sections, sizes, onSizes, onActi
             </section>
           ))}
           <footer className="menu-footer">
-            <button type="button" role="menuitem" aria-haspopup="dialog" onClick={() => setSizesOpen(true)}>
+            <button type="button" role="menuitem" aria-haspopup="dialog" onClick={() => setPage('size')}>
               <Icon name="maximize" size={14} />大小
+            </button>
+            <button type="button" role="menuitem" aria-haspopup="dialog" onClick={() => { setPage('display'); void display.refresh(); }}>
+              <Icon name="fullscreen" size={14} />螢幕
             </button>
             <button type="button" role="menuitem" onClick={onActions}>
               <Icon name="settings" size={14} />動作管理

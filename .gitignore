@@ -10,6 +10,9 @@ src-tauri/gen/
 
 # Local art references and retired Option C generation helpers
 /Elise/
+/concept/
+/video/
+/pipeline/comfyui_elise_green_screen.zip
 optionC-layers-preview.jpg
 scripts/
 tools/

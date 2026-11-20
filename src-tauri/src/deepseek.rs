@@ -6,7 +6,11 @@ use serde::{Deserialize, Serialize};
 
 const KEYRING_ERROR: &str = "無法存取系統憑證，請確認憑證服務可用。";
 const NETWORK_ERROR: &str = "無法連線至 DeepSeek，請確認網路後再試。";
-const ELISE_PROMPT: &str = include_str!("../../skills/elise-grace/SKILL.md");
+const CHARACTER_PROMPT: &str = concat!(
+    include_str!("../../skills/amamiya-shizuku/SKILL.md"),
+    "\n\n## 共用角色資料\n",
+    include_str!("../../src/characterProfile.json"),
+);
 
 fn credential() -> Result<Entry, String> {
     Entry::new("dev.elise.pet", "deepseek-api-key").map_err(|_| KEYRING_ERROR.into())
@@ -186,7 +190,7 @@ pub async fn deepseek_chat(
         0,
         ChatMessage {
             role: Role::System,
-            content: ELISE_PROMPT.into(),
+            content: CHARACTER_PROMPT.into(),
         },
     );
     let request = ChatRequest {
