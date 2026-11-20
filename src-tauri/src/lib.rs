@@ -16,5 +16,5 @@ pub fn run() {
             deepseek::deepseek_chat,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Elise-pet");
+        .expect("error while running shizuku-pet");
 }

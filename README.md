@@ -1,69 +1,93 @@
-# Elise-pet
+# shizuku-pet
 
-Elise-pet 是基于 Tauri 2、React 19 和 TypeScript 的透明桌面宠物，角色为雨宮 雫（Amamiya Shizuku）。
+雨宮 雫（Amamiya Shizuku）的透明桌面寵物，使用 Tauri 2、React 19 和 TypeScript 製作。
 
-## 当前功能
+## 功能
 
-- 透明、无边框、置顶桌面窗口（macOS 通过 `macOSPrivateApi` 开启透明）
-- 点击穿透：鼠标只有落在雫的不透明像素或面板上时窗口才接收点击，其余透明区域的点击会落到下面的桌面/窗口
-- 雫正面待机时循环播放 `poses/standby/`，空闲时会随机做站立小动作、转身、短途散步或播放匯入动作
-- 头顶对话气泡、头像随心情切换表情的菜单与聊天面板
-- 散步前雫会先转到行进方向，再沿当前屏幕工作区走动。手动散步会逐段随机选方向和距离，可能在屏幕中途掉头。靠近边缘时会优先往里走
-- 散步使用独立的活泼程度设置。每轮空闲优先检查站立小动作（正面默认 30%），其余轮次按懒散 10%、正常 25%、活泼 45% 检查散步，随后才播放该朝向抽到的其他动作。未抽到动作会保持当前朝向待机
-- 在「动作管理」选择起始朝向后，点击「匯入 PNG 資料夾」即可导入至少两帧的序列。可在列表调整帧率、机率和结束朝向，左右朝向的导入动作也可以设为散步。删除动作会移除应用内保存的副本
-- 散步循环播放 `poses/walk/`，基础速度为 20 FPS。转向使用 `poses/front2left/` 和 `poses/left2back/`，通过镜像和倒播补全各方向，也会用于随机回头
-- 打开菜单、聊天或 API 管理时会暂停散步，关闭后继续。拖动桌宠会结束这一趟散步
-- DeepSeek 多轮聊天，支持选择模型和思考力度。API Key 存在系统凭证库，余额通过官方接口查询
-- 角色尺寸可在菜单中调整，设置保存在本机
-- 「角色設定檔」提供基本资料、性格及两张概念图。界面与 DeepSeek 对话共用 `src/characterProfile.json`，聊天语气另由 `skills/amamiya-shizuku/SKILL.md` 定义
-- 右键菜单的「螢幕」会列出已连接显示器和实际解析度。拖曳及散步都限制在选定屏幕的工作区，手动切换显示器后应用会记住选择
+- 透明、無邊框、置頂的桌寵視窗（macOS 透過 `macOSPrivateApi` 開啟透明）
+- 點擊穿透：只有游標落在雫的不透明像素或面板上時視窗才接收點擊
+- 正面待機循環播放 `standby`，空閒時隨機做站立小動作、轉身、短途散步或播放匯入的動作
+- 散步前先轉向行進方向，沿選定螢幕的工作區走動，靠近邊緣時優先往內走
+- 「動作管理」可匯入 PNG 序列（至少兩幀），並按四個起始朝向設定 FPS、機率和結束朝向
+- DeepSeek 多輪聊天，可選模型和思考力度；API Key 存在系統憑證庫
+- 「角色設定檔」顯示基本資料、性格與概念圖
+- 可調整角色大小、選擇顯示器，設定保存在本機
 
-运行时按固定显示框等比绘制完整 PNG 画布。所有 640×640 动作帧共享同一个显示位置，保留素材原有留白。
-更换动作帧时，把 PNG 放入对应目录并按播放顺序编号，例如 `frame_0001.png`、`frame_0002.png`。启动开发服务器或打包时会按文件名自然排序并读取实际帧数。
-打包只内置 `walk`、`stand`、`standby`、`front2left` 和 `left2back` 的动作素材。匯入的 PNG 序列由应用保存在本机，每个匯入动作有独立的副本。
+## 目錄結構
 
-## 目录结构
-
-- `src/App.tsx`：状态与动作；`src/PetMenu.tsx`、`src/ChatPanel.tsx`：菜单与聊天 UI
-- `src/useWalker.ts`：散步动画与窗口移动；`src/useClickThrough.ts`：透明区域点击穿透
-- `src/assets.ts`：所有图片路径与图标留白表
-- `public/assets/elise/`：角色的姿势、表情、嘴型及概念图 PNG
-- `public/assets/ui/`：界面图标
-- `src-tauri/`：桌宠窗口（420×640）与 Tauri 配置
-
-## 本地运行
-
-需要 Node.js 与 Rust；Windows 另需 WebView2。macOS 使用 `npm run tauri dev`。
-
-```powershell
-npm.cmd install
-npm.cmd run tauri -- dev
+```text
+character/                 角色資料（介面與 DeepSeek 共用）
+  profile.json             基本資料、性格、日常
+  persona.md               聊天語氣與扮演規則（編譯時嵌入 system prompt）
+public/assets/
+  shizuku/poses/<動作>/    內建動作幀：walk、stand、standby、front2left、left2back
+  shizuku/expressions/     選單與聊天頭像表情
+  shizuku/concept/         角色設定檔的概念圖
+  icons/                   介面圖示
+src/
+  App.tsx                  狀態與動作排程
+  components/              選單、聊天、動作管理、DeepSeek、設定檔等 UI
+  hooks/                   useWalker（散步與轉身）、useClickThrough、usePetDisplay
+  lib/                     素材路徑、轉身幀、動作設定、本機偏好
+src-tauri/                 Rust 端：視窗設定、動作匯入/刪除、DeepSeek API
+tools/comfyui_shizuku_green_screen/
+                           ComfyUI 綠幕去背節點（製作動作素材用，不參與打包）
+app-icon.png               用 `npm run tauri icon app-icon.png` 重新產生 src-tauri/icons
 ```
 
-仅预览前端：
+## 本地執行
 
-```powershell
-npm.cmd run dev
+需要 Node.js 與 Rust；Windows 另需 WebView2。
+
+```bash
+npm install
+npm run tauri dev
 ```
 
-构建检查：
+只預覽前端（不含原生視窗、聊天與匯入）：
 
-```powershell
-npm.cmd run build
-cd src-tauri
-cargo check --locked
+```bash
+npm run dev
 ```
+
+建置檢查：
+
+```bash
+npm run build
+cd src-tauri && cargo test --locked
+```
+
+## 打包成應用程式
+
+```bash
+npm install
+npm run tauri build
+```
+
+產物位於 `src-tauri/target/release/bundle/`：
+
+| 平台 | 產物 | 說明 |
+| --- | --- | --- |
+| macOS | `macos/Shizuku Pet.app`、`dmg/Shizuku Pet_<版本>_<架構>.dmg` | 把 `.app` 拖進「應用程式」即可雙擊啟動 |
+| Windows | `nsis/Shizuku Pet_<版本>_x64-setup.exe`、`msi/*.msi` | 安裝程式會在需要時下載 WebView2 |
+
+- 每個平台要在該平台上打包：`.exe` 需在 Windows（裝好 Node.js、Rust、Visual Studio C++ Build Tools）執行同樣的指令。
+- macOS 產物只有 ad-hoc 簽名。自己打包的 `.app` 可直接開啟；傳給別人時對方第一次需要在 Finder 右鍵 →「打開」，或到「系統設定 → 隱私權與安全性」允許。要免除這一步需 Apple Developer 帳號簽名並公證。
+- Apple Silicon 預設產出 `aarch64` 版本；要給 Intel Mac 用，先 `rustup target add x86_64-apple-darwin`，再執行 `npm run tauri build -- --target universal-apple-darwin`。
 
 ## 操作
 
-- 左键按住并移动：拖动窗口
-- 右键雨宮 雫：打开菜单，可以聊天、散步或查看「角色設定檔」
-- 菜单里的「大小」可调整角色比例，「DeepSeek API」可管理密钥、余额和模型。保存 API Key 后，聊天时发送的消息和近期对话会提交给 DeepSeek
-- 右键 →「动作管理」按四个起始朝向列出内建与导入动作，可设置 FPS、概率和结束朝向。各朝向的概率总和最多 100%，配置保存在本机。内建动作固定启用，导入动作可启用、停用或试播
-- 转向只使用两组素材，镜像和倒播沿用对应素材的 FPS。左右组可导入散步帧，循环散步帧的首尾需接续。离散的原地动作可以按素材实际末帧设置结束朝向
-- 导入的 PNG 会按文件名排序，并复制到本机应用数据的 `actions/front`、`left`、`back` 或 `right` 中。一个动作内请使用同尺寸的透明画布
-- Esc：关闭菜单/聊天
+- 左鍵按住移動：拖動雫
+- 右鍵雫：開啟選單（聊天、散步、角色設定檔、大小、螢幕、動作管理、DeepSeek API）
+- Esc：關閉選單
 
-## 素材说明
+## 動作素材
 
-代码使用 MIT License。角色美术与生成素材请单独确认公开和再利用许可。
+- 內建動作放在 `public/assets/shizuku/poses/<動作>/`，按播放順序命名為 `frame_0001.png`、`frame_0002.png`……。啟動或打包時按檔名自然排序並讀取實際幀數。
+- 所有幀使用 640×640 透明畫布，共用同一個顯示位置。
+- 轉身只用 `front2left` 與 `left2back` 兩組素材，透過鏡像和倒播補全其他方向。
+- 匯入的動作會複製到本機應用資料夾的 `actions/<朝向>/`，不放進倉庫。
+
+## 授權
+
+程式碼使用 MIT License。角色美術與生成素材請另行確認公開與再利用許可。

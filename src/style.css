@@ -31,8 +31,8 @@ img { -webkit-user-drag: none; user-select: none; }
 .stage { position: absolute; left: 0; bottom: 0; height: 100%; }
 
 /* ---------- Characters ---------- */
-/* Elise's body is centred in the stage (65 + 290 / 2 = 210) so she can turn in place. */
-.pet-group { position: absolute; left: 65px; bottom: 17px; width: 290px; height: 290px; scale: var(--elise-scale, 1); translate: 0 var(--pet-offset, 0px); transform-origin: 50% calc(100% - 17px); }
+/* Shizuku's body is centred in the stage (65 + 290 / 2 = 210) so she can turn in place. */
+.pet-group { position: absolute; left: 65px; bottom: 17px; width: 290px; height: 290px; scale: var(--pet-scale, 1); translate: 0 var(--pet-offset, 0px); transform-origin: 50% calc(100% - 17px); }
 
 .character { position: absolute; display: block; padding: 0; margin: 0; border: 0; background: transparent; appearance: none; line-height: 0; -webkit-tap-highlight-color: transparent; }
 .character:focus-visible { outline: none; }

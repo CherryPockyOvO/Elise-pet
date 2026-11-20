@@ -1,23 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { cursorPosition, getCurrentWindow, type Monitor } from '@tauri-apps/api/window';
-import { ELISE_FRAMES, PRELOAD, type Expression } from './assets';
-import { ChatPanel, type Message } from './ChatPanel';
-import { CharacterProfile } from './CharacterProfile';
-import character from './characterProfile.json';
-import { ActionPanel } from './ActionPanel';
-import { deleteImportedAction, loadActionLibrary, loadDisabledActions, saveDisabledActions, type ImportedAction } from './actionLibrary';
-import { actionsForHeading, chooseAction, isWalkingAction, loadActionSettings, saveActionSettings, STANDBY_FPS, WALK_ACTIVITY, withoutAction, type ActionRow, type ActionSettings } from './actionSettings';
-import { DeepSeekPanel } from './DeepSeekPanel';
-import { EliseStandby } from './EliseStandby';
-import { loadPreferences, MODELS } from './deepseekPreferences';
-import { Icon } from './Icon';
-import { PetMenu, type MenuSection } from './PetMenu';
-import { loadPetSizes, storePetSizes, type PetSizes } from './petSizes';
-import { HEADING_STILLS, type Heading } from './eliseTurns';
-import { useClickThrough } from './useClickThrough';
-import { useWalker, type ConfiguredWalkAction } from './useWalker';
-import { STAGE_WIDTH, usePetDisplay } from './usePetDisplay';
+import { POSE_FRAMES, PRELOAD, type Expression } from './lib/assets';
+import { ChatPanel, type Message } from './components/ChatPanel';
+import { CharacterProfile } from './components/CharacterProfile';
+import character from '../character/profile.json';
+import { ActionPanel } from './components/ActionPanel';
+import { deleteImportedAction, loadActionLibrary, loadDisabledActions, saveDisabledActions, type ImportedAction } from './lib/actionLibrary';
+import { actionsForHeading, chooseAction, isWalkingAction, loadActionSettings, saveActionSettings, STANDBY_FPS, WALK_ACTIVITY, withoutAction, type ActionRow, type ActionSettings } from './lib/actionSettings';
+import { DeepSeekPanel } from './components/DeepSeekPanel';
+import { Standby } from './components/Standby';
+import { loadPreferences, MODELS } from './lib/deepseekPreferences';
+import { Icon } from './components/Icon';
+import { PetMenu, type MenuSection } from './components/PetMenu';
+import { loadPetSizes, storePetSizes, type PetSizes } from './lib/petSizes';
+import { HEADING_STILLS, type Heading } from './lib/turns';
+import { useClickThrough } from './hooks/useClickThrough';
+import { useWalker, type ConfiguredWalkAction } from './hooks/useWalker';
+import { STAGE_WIDTH, usePetDisplay } from './hooks/usePetDisplay';
 
 type Bubble = { id: number; text: string; icon?: string };
 
@@ -41,19 +41,19 @@ export function App() {
   const [preferences, setPreferences] = useState(loadPreferences);
   const [sizes, setSizes] = useState(loadPetSizes);
   const [messages, setMessages] = useState<Message[]>(() => [
-    { id: nextId++, from: 'elise', text: `你好，我是${character.name}。叫我雫就好。今天過得還好嗎？` },
+    { id: nextId++, from: 'shizuku', text: `你好，我是${character.name}。叫我雫就好。今天過得還好嗎？` },
   ]);
   const [typing, setTyping] = useState(false);
   const [chatError, setChatError] = useState('');
   const [menu, setMenu] = useState(false);
   const [bubble, setBubble] = useState<Bubble | null>(null);
-  const [pressingElise, setPressingElise] = useState(false);
+  const [pressingPet, setPressingPet] = useState(false);
   const [activityRound, setActivityRound] = useState(0);
 
   const stageRef = useRef<HTMLDivElement>(null);
   const spriteRef = useRef<HTMLImageElement>(null);
   const timers = useRef<Record<string, number>>({});
-  const scale = useRef(sizes.eliseSize);
+  const scale = useRef(sizes.scale);
   const monitor = useRef<Monitor | null>(null);
   const requestPending = useRef(false);
   const gestureCleanup = useRef<(() => void) | null>(null);
@@ -69,7 +69,7 @@ export function App() {
   const animated = walker.phase !== 'off';
   const walking = walker.phase === 'walk' || walker.phase === 'turn';
   const modalOpen = deepSeekOpen || actionsOpen || profileOpen;
-  const interacting = menu || chatOpen || modalOpen || pressingElise;
+  const interacting = menu || chatOpen || modalOpen || pressingPet;
   const configuredImports = useMemo(() => importedActions.map(action => ({
     ...action, kind: actionSettings.kinds[action.id] ?? action.kind,
   })), [importedActions, actionSettings.kinds]);
@@ -132,7 +132,7 @@ export function App() {
     switch (row.id) {
       case 'stand':
       case 'standby':
-        perform({ frames: ELISE_FRAMES[row.id], heading: 'front', fps: actionSettings.fps[row.id] ?? row.defaultFps },
+        perform({ frames: POSE_FRAMES[row.id], heading: 'front', fps: actionSettings.fps[row.id] ?? row.defaultFps },
           end ?? 'front', 'front');
         break;
       case 'walk':
@@ -204,7 +204,7 @@ export function App() {
     setTyping(true);
     try {
       const reply = await invoke<string>('deepseek_chat', { ...preferences, messages: context });
-      const incoming: Message = { id: nextId++, from: 'elise', text: reply };
+      const incoming: Message = { id: nextId++, from: 'shizuku', text: reply };
       setMessages(previous => [...previous, incoming]);
       return true;
     } catch (error) {
@@ -260,25 +260,25 @@ export function App() {
   }
 
   function updateSizes(next: PetSizes) {
-    scale.current = next.eliseSize;
+    scale.current = next.scale;
     setSizes(next);
     storePetSizes(next);
     const selected = monitor.current;
     if (selected) {
       void getCurrentWindow().outerPosition().then(origin => {
-        if (monitor.current === selected && scale.current === next.eliseSize) {
+        if (monitor.current === selected && scale.current === next.scale) {
           return display.movePet(selected, origin.x, display.petTop(selected, origin.y));
         }
       }).catch(() => undefined);
     }
   }
 
-  function pressElise(event: ReactPointerEvent<HTMLButtonElement>) {
+  function pressPet(event: ReactPointerEvent<HTMLButtonElement>) {
     const selected = monitor.current;
     if (event.button !== 0 || !event.isPrimary || !selected) return;
     event.preventDefault();
     gestureCleanup.current?.();
-    setPressingElise(true);
+    setPressingPet(true);
     setMenu(false);
     const target = event.currentTarget;
     const pointer = event.pointerId;
@@ -298,7 +298,7 @@ export function App() {
       window.removeEventListener('blur', cleanup);
       if (target.hasPointerCapture(pointer)) target.releasePointerCapture(pointer);
       gestureCleanup.current = null;
-      setPressingElise(false);
+      setPressingPet(false);
     };
     const moveToCursor = async () => {
       if (moving) return;
@@ -365,13 +365,13 @@ export function App() {
 
   const facingStill = heading !== 'front' ? HEADING_STILLS[heading] : null;
   const pivot = SCALE_PIVOT_HEIGHT;
-  const menuBottom = pivot + (HEAD_HEIGHT - pivot) * sizes.eliseSize + 12 - display.offset;
+  const menuBottom = pivot + (HEAD_HEIGHT - pivot) * sizes.scale + 12 - display.offset;
   const bubbleStyle = {
-    bottom: `min(${pivot + (BUBBLE_HEIGHT - pivot) * sizes.eliseSize - display.offset}px, max(8px, calc(100% - 85px)))`,
+    bottom: `min(${pivot + (BUBBLE_HEIGHT - pivot) * sizes.scale - display.offset}px, max(8px, calc(100% - 85px)))`,
     left: STAGE_WIDTH / 2,
   };
   const petStyle = {
-    '--elise-scale': sizes.eliseSize,
+    '--pet-scale': sizes.scale,
     '--pet-offset': `${display.offset}px`,
   } as CSSProperties;
 
@@ -422,19 +422,19 @@ export function App() {
           <button
             className={`character ${walking ? 'walk' : walker.phase}`}
             data-heading={heading}
-            onPointerDown={pressElise}
+            onPointerDown={pressPet}
             onContextMenu={openMenu}
             title="按住拖動 · 右鍵開啟選單"
             aria-label={`${character.name}，按住拖動，右鍵開啟選單`}
           >
             {animated ? (
-              <img className={`elise-cycle ${walker.phase === 'walk' ? 'walk-sprite' : 'turn-sprite'}`}
-                ref={walker.spriteRef} crossOrigin="anonymous" src={ELISE_FRAMES.front2left[0]} alt={character.name} draggable={false} />
+              <img className={`pet-cycle ${walker.phase === 'walk' ? 'walk-sprite' : 'turn-sprite'}`}
+                ref={walker.spriteRef} crossOrigin="anonymous" src={POSE_FRAMES.front2left[0]} alt={character.name} draggable={false} />
             ) : facingStill ? (
               <img src={facingStill.source} style={facingStill.mirrored ? { transform: 'scaleX(-1)' } : undefined}
                 alt={character.name} draggable={false} />
             ) : (
-              <EliseStandby fps={actionSettings.fps.standby ?? STANDBY_FPS} />
+              <Standby fps={actionSettings.fps.standby ?? STANDBY_FPS} />
             )}
           </button>
         </div>
