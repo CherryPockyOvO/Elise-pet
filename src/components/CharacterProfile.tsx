@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import character from '../../character/profile.json';
-import { expression } from '../lib/assets';
+import { AVATAR } from '../lib/assets';
 import { Icon } from './Icon';
 
 const concepts = [
@@ -58,7 +58,7 @@ export function CharacterProfile({ onClose }: { onClose: () => void }) {
             <div>
               <dt>罩杯</dt>
               <dd className="profile-private">
-                <span className="avatar profile-shy" style={{ backgroundImage: `url(${expression('shy')})` }} aria-hidden="true" />
+                <span className="avatar profile-shy" style={{ backgroundImage: `url(${AVATAR})` }} aria-hidden="true" />
                 {character.cup}
               </dd>
             </div>

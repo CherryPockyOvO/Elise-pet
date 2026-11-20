@@ -1,12 +1,28 @@
-export type Expression = 'neutral' | 'happy' | 'speaking' | 'shy' | 'thinking';
-
-declare const __POSE_FRAMES__: Record<'walk' | 'stand' | 'standby' | 'front2left' | 'left2back', string[]>;
+type PoseName = 'walk' | 'stand' | 'front2left' | 'front2right' | 'left2back' | 'right2back'
+  | 'standby_front' | 'standby_left' | 'standby_right' | 'standby_back';
+/** Built-in pose frames. Only the optional stand gesture may be empty. */
+declare const __POSE_FRAMES__: Record<PoseName, string[]>;
 export const POSE_FRAMES = __POSE_FRAMES__;
 
-export const expression = (name: Expression) => `/assets/shizuku/expressions/${name}.png`;
+/** Round avatars crop the face out of the first front-facing standby frame. */
+export const AVATAR = POSE_FRAMES.standby_front[0];
 export const icon = (name: string) => `/assets/icons/${name}.png`;
 
-export const PRELOAD = Object.values(POSE_FRAMES).flat();
+const preloaded: HTMLImageElement[] = [];
+
+/**
+ * Decode every built-in frame up front, in the same CORS mode as the sprite element,
+ * and keep the images referenced so later frame swaps never wait on a load.
+ */
+export function preloadPoses() {
+  if (preloaded.length) return;
+  for (const source of Object.values(POSE_FRAMES).flat()) {
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.src = source;
+    preloaded.push(image);
+  }
+}
 
 /**
  * The icon PNGs have very different amounts of empty padding. This is how much

@@ -180,7 +180,7 @@ export function ActionPanel({ actions, disabled, loading, storageError, settings
                   )}
                   <div className="action-row-fields">
                     <label>
-                      {row.id === 'front2left' || row.id === 'left2back' ? '共用 FPS' : 'FPS'}
+                      FPS
                       <input key={actionFps} type="number" min={1} max={30} step={1} defaultValue={actionFps}
                           aria-label={`${row.name} FPS`} disabled={working}
                           onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }}

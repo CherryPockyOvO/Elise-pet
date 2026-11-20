@@ -1,20 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { cursorPosition, getCurrentWindow, type Monitor } from '@tauri-apps/api/window';
-import { POSE_FRAMES, PRELOAD, type Expression } from './lib/assets';
+import { POSE_FRAMES, preloadPoses } from './lib/assets';
 import { ChatPanel, type Message } from './components/ChatPanel';
 import { CharacterProfile } from './components/CharacterProfile';
 import character from '../character/profile.json';
 import { ActionPanel } from './components/ActionPanel';
 import { deleteImportedAction, loadActionLibrary, loadDisabledActions, saveDisabledActions, type ImportedAction } from './lib/actionLibrary';
-import { actionsForHeading, chooseAction, isWalkingAction, loadActionSettings, saveActionSettings, STANDBY_FPS, WALK_ACTIVITY, withoutAction, type ActionRow, type ActionSettings } from './lib/actionSettings';
+import { actionsForHeading, chooseAction, isWalkingAction, loadActionSettings, saveActionSettings, standbyFrames, STANDBY_FPS, TURN_ENDS, WALK_ACTIVITY, withoutAction, type ActionRow, type ActionSettings } from './lib/actionSettings';
 import { DeepSeekPanel } from './components/DeepSeekPanel';
-import { Standby } from './components/Standby';
+import { useIdlePose } from './components/Standby';
 import { loadPreferences, MODELS } from './lib/deepseekPreferences';
 import { Icon } from './components/Icon';
 import { PetMenu, type MenuSection } from './components/PetMenu';
 import { loadPetSizes, storePetSizes, type PetSizes } from './lib/petSizes';
-import { HEADING_STILLS, type Heading } from './lib/turns';
+import type { Heading, TurnFrame } from './lib/turns';
 import { useClickThrough } from './hooks/useClickThrough';
 import { useWalker, type ConfiguredWalkAction } from './hooks/useWalker';
 import { STAGE_WIDTH, usePetDisplay } from './hooks/usePetDisplay';
@@ -59,7 +59,8 @@ export function App() {
   const gestureCleanup = useRef<(() => void) | null>(null);
   const actionFps = useRef(actionSettings.fps);
   const walkActions = useRef<readonly ConfiguredWalkAction[]>([]);
-  const walker = useWalker({ stage: stageRef, sprite: spriteRef, scale, monitor, walkActions, actionFps });
+  const idleLeadIn = useRef<() => TurnFrame[]>(() => []);
+  const walker = useWalker({ stage: stageRef, sprite: spriteRef, scale, monitor, walkActions, actionFps, idleLeadIn });
   const { start: startWalk, stop: stopWalk, setPaused, turnTo, perform, heading } = walker;
   const stopMovement = useCallback(() => {
     gestureCleanup.current?.();
@@ -105,7 +106,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    PRELOAD.forEach(source => { new Image().src = source; });
+    preloadPoses();
     const onEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setMenu(false); };
     window.addEventListener('keydown', onEscape);
     const pending = timers.current;
@@ -129,28 +130,30 @@ export function App() {
       perform(action, end ?? action.heading);
       return;
     }
+    const fps = actionSettings.fps[row.id] ?? row.defaultFps;
     switch (row.id) {
-      case 'stand':
-      case 'standby':
-        perform({ frames: POSE_FRAMES[row.id], heading: 'front', fps: actionSettings.fps[row.id] ?? row.defaultFps },
-          end ?? 'front', 'front');
-        break;
       case 'walk':
         void startWalk(randomBetween(75, 390), {
           ending: end, preferred: from === 'left' || from === 'right' ? from : undefined, builtIn: true,
         });
         break;
-      case 'front2left': {
-        const side = end === 'left' || end === 'right' ? end : Math.random() < 0.5 ? 'left' : 'right';
-        const to = from === 'front' ? side : 'front';
+      case 'front2left':
+      case 'front2right':
+      case 'left2back':
+      case 'right2back': {
+        // Each turn joins two headings; play it towards the one Shizuku is not facing.
+        const [first, second] = TURN_ENDS[row.id];
+        const to = from === first ? second : first;
         turnTo(end ?? to, { from, to });
         break;
       }
-      case 'left2back': {
-        const side = end === 'left' || end === 'right' ? end : Math.random() < 0.5 ? 'left' : 'right';
-        const to = from === 'back' ? side : 'back';
-        turnTo(end ?? to, { from, to });
+      case 'stand':
+        perform({ frames: POSE_FRAMES.stand, heading: 'front', fps }, end ?? 'front', 'front');
         break;
+      default: {
+        // A standby loop played once as a gesture, in its own heading.
+        const heading = row.headings[0];
+        perform({ frames: POSE_FRAMES[row.id], heading, fps }, end ?? heading, heading);
       }
     }
   }, [actionSettings, perform, startWalk, turnTo]);
@@ -344,8 +347,6 @@ export function App() {
     };
   }
 
-  const mood: Expression = walking ? 'happy' : typing ? 'speaking' : 'neutral';
-
   const status =
     walking ? (walker.paused ? '散步暫停中' : walker.phase === 'turn' ? '先轉個身…' : '散步中…')
       : walker.phase === 'look' ? '正在四處看看…'
@@ -363,7 +364,11 @@ export function App() {
     },
   ];
 
-  const facingStill = heading !== 'front' ? HEADING_STILLS[heading] : null;
+  const idleLoop = standbyFrames(heading);
+  useIdlePose({
+    sprite: spriteRef, active: !animated, walkerBusy: walker.isBusy, frames: idleLoop, leadIn: idleLeadIn,
+    fps: actionSettings.fps[`standby_${heading}`] ?? STANDBY_FPS,
+  });
   const pivot = SCALE_PIVOT_HEIGHT;
   const menuBottom = pivot + (HEAD_HEIGHT - pivot) * sizes.scale + 12 - display.offset;
   const bubbleStyle = {
@@ -400,7 +405,6 @@ export function App() {
             <ChatPanel
               messages={messages}
               typing={typing}
-              mood={mood}
               model={MODELS[preferences.model]}
               error={chatError}
               active={!modalOpen}
@@ -427,15 +431,9 @@ export function App() {
             title="按住拖動 · 右鍵開啟選單"
             aria-label={`${character.name}，按住拖動，右鍵開啟選單`}
           >
-            {animated ? (
-              <img className={`pet-cycle ${walker.phase === 'walk' ? 'walk-sprite' : 'turn-sprite'}`}
-                ref={walker.spriteRef} crossOrigin="anonymous" src={POSE_FRAMES.front2left[0]} alt={character.name} draggable={false} />
-            ) : facingStill ? (
-              <img src={facingStill.source} style={facingStill.mirrored ? { transform: 'scaleX(-1)' } : undefined}
-                alt={character.name} draggable={false} />
-            ) : (
-              <Standby fps={actionSettings.fps.standby ?? STANDBY_FPS} />
-            )}
+            {/* One element for every pose. The idle loop and the walker both draw into it. */}
+            <img className="pet-sprite" ref={walker.spriteRef} crossOrigin="anonymous"
+              src={POSE_FRAMES.standby_front[0]} alt={character.name} draggable={false} />
           </button>
         </div>
 
@@ -443,7 +441,6 @@ export function App() {
           <PetMenu
             bottom={menuBottom}
             status={status}
-            mood={mood}
             sections={sections}
             onClose={() => setMenu(false)}
             sizes={sizes}

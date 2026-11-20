@@ -49,8 +49,8 @@ img { -webkit-user-drag: none; user-select: none; }
 .pet-menu { position: absolute; left: 210px; z-index: 10; padding: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); animation: pop .16s ease-out; transform-origin: 50% 100%; }
 .menu-header { display: flex; align-items: center; gap: 10px; padding: 2px 4px 10px; border-bottom: 1px solid var(--line); }
 .pet-menu { max-height: calc(100% - 24px); overflow-y: auto; }
-/* Expression PNGs are busts; zoom in on the face. */
-.avatar { width: 40px; height: 40px; flex: none; border-radius: 50%; background-color: var(--tint); background-size: 210%; background-position: 50% 42%; background-repeat: no-repeat; box-shadow: inset 0 0 0 1px var(--line); }
+/* The avatar is a full-body standby frame; zoom in on the face. */
+.avatar { width: 40px; height: 40px; flex: none; border-radius: 50%; background-color: var(--tint); background-size: 380%; background-position: 50% 11%; background-repeat: no-repeat; box-shadow: inset 0 0 0 1px var(--line); }
 .menu-name { font-weight: 700; font-size: 14px; }
 .menu-name span { color: var(--accent); }
 .menu-status { font-size: 12px; color: var(--muted); margin-top: 1px; }

@@ -1,4 +1,5 @@
 import type { ActionKind, ImportedAction } from './actionLibrary';
+import { POSE_FRAMES } from './assets';
 import type { Heading } from './turns';
 
 export const HEADINGS: Record<Heading, string> = { front: '正面', left: '左側', back: '背面', right: '右側' };
@@ -10,7 +11,9 @@ export const WALK_ACTIVITY = {
 } as const;
 export type WalkActivity = keyof typeof WALK_ACTIVITY;
 
-type BuiltInId = 'standby' | 'stand' | 'walk' | 'front2left' | 'left2back';
+export type TurnId = 'front2left' | 'front2right' | 'left2back' | 'right2back';
+export type StandbyId = `standby_${Heading}`;
+type BuiltInId = StandbyId | TurnId | 'stand' | 'walk';
 
 type BuiltInAction = {
   id: BuiltInId;
@@ -21,13 +24,31 @@ type BuiltInAction = {
 };
 
 export const STANDBY_FPS = 10;
-const BUILT_IN_ACTIONS: readonly BuiltInAction[] = [
+/** The two headings each turn sequence connects; it plays forwards from the first. */
+export const TURN_ENDS: Record<TurnId, readonly [Heading, Heading]> = {
+  front2left: ['front', 'left'],
+  front2right: ['front', 'right'],
+  left2back: ['left', 'back'],
+  right2back: ['right', 'back'],
+};
+
+const BUILT_IN_ACTIONS: readonly BuiltInAction[] = ([
   { id: 'stand', name: '站立小動作', priority: 1, defaultFps: 10, headings: ['front'] },
   { id: 'walk', name: '散步', priority: 2, defaultFps: 20, headings: ['left', 'right'] },
-  { id: 'front2left', name: '正面 ↔ 側面', priority: 2, defaultFps: 30, headings: ['front', 'left', 'right'] },
-  { id: 'left2back', name: '側面 ↔ 背面', priority: 2, defaultFps: 30, headings: ['left', 'back', 'right'] },
-  { id: 'standby', name: '待機', priority: 3, defaultFps: STANDBY_FPS, headings: ['front'] },
-];
+  { id: 'front2left', name: '正面 ↔ 左側', priority: 2, defaultFps: 30, headings: TURN_ENDS.front2left },
+  { id: 'front2right', name: '正面 ↔ 右側', priority: 2, defaultFps: 30, headings: TURN_ENDS.front2right },
+  { id: 'left2back', name: '左側 ↔ 背面', priority: 2, defaultFps: 30, headings: TURN_ENDS.left2back },
+  { id: 'right2back', name: '右側 ↔ 背面', priority: 2, defaultFps: 30, headings: TURN_ENDS.right2back },
+  { id: 'standby_front', name: '正面待機', priority: 3, defaultFps: STANDBY_FPS, headings: ['front'] },
+  { id: 'standby_left', name: '左側待機', priority: 3, defaultFps: STANDBY_FPS, headings: ['left'] },
+  { id: 'standby_right', name: '右側待機', priority: 3, defaultFps: STANDBY_FPS, headings: ['right'] },
+  { id: 'standby_back', name: '背面待機', priority: 3, defaultFps: STANDBY_FPS, headings: ['back'] },
+] satisfies readonly BuiltInAction[])
+  // The optional stand gesture appears only once its frames exist.
+  .filter(action => action.id === 'walk' || POSE_FRAMES[action.id].length >= 2);
+
+/** The standby loop for a heading. */
+export const standbyFrames = (heading: Heading) => POSE_FRAMES[`standby_${heading}`];
 
 export type ActionRow = (BuiltInAction & { source: 'built-in' }) | {
   source: 'imported';
@@ -52,13 +73,13 @@ const DEFAULTS: ActionSettings = {
   kinds: {},
   endings: { front: {}, left: {}, back: {}, right: {} },
   chances: {
-    front: { stand: 3000, front2left: 1300 },
+    front: { stand: 3000, front2left: 650, front2right: 650 },
     left: { front2left: 2500, left2back: 2200 },
-    back: { left2back: 6800 },
-    right: { front2left: 2500, left2back: 2200 },
+    back: { left2back: 3400, right2back: 3400 },
+    right: { front2right: 2500, right2back: 2200 },
   },
 };
-const SETTINGS_KEY = 'shizuku-pet.actions.settings';
+const SETTINGS_KEY = 'shizuku-pet.actions.settings.v2';
 
 export function actionsForHeading(heading: Heading, imports: readonly ImportedAction[]): ActionRow[] {
   const builtIn = BUILT_IN_ACTIONS.filter(action => action.headings.includes(heading));
@@ -101,7 +122,7 @@ export function loadActionSettings(): ActionSettings {
       const savedChances = stored.chances?.[heading];
       if (savedChances && typeof savedChances === 'object') {
         const group = Object.fromEntries(Object.entries(boundedEntries(savedChances, 0, FULL_CHANCE))
-          .filter(([id]) => id.startsWith('action-') || BUILT_IN_ACTIONS.some(action => action.id === id && action.id !== 'walk')));
+          .filter(([id]) => id.startsWith('action-') || BUILT_IN_ACTIONS.some(action => action.id === id && action.id !== 'walk' && action.headings.includes(heading))));
         if (sum(group) <= FULL_CHANCE) chances[heading] = group;
       }
       const groupEndings = stored.endings?.[heading];

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { expression, type Expression } from '../lib/assets';
+import { AVATAR } from '../lib/assets';
 import { Icon } from './Icon';
 import character from '../../character/profile.json';
 
@@ -8,7 +8,6 @@ export type Message = { id: number; from: 'shizuku' | 'you'; text: string };
 type Props = {
   messages: Message[];
   typing: boolean;
-  mood: Expression;
   model: string;
   error: string;
   active: boolean;
@@ -17,7 +16,7 @@ type Props = {
   onClose: () => void;
 };
 
-export function ChatPanel({ messages, typing, mood, model, error, active, onSend, onSettings, onClose }: Props) {
+export function ChatPanel({ messages, typing, model, error, active, onSend, onSettings, onClose }: Props) {
   const [input, setInput] = useState('');
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -39,7 +38,7 @@ export function ChatPanel({ messages, typing, mood, model, error, active, onSend
   return (
     <section className="chat" aria-label={`與${character.name}對話`} onKeyDown={event => { if (event.key === 'Escape') onClose(); }}>
       <header>
-        <span className="avatar" style={{ backgroundImage: `url(${expression(typing ? 'thinking' : mood)})` }} />
+        <span className="avatar" style={{ backgroundImage: `url(${AVATAR})` }} />
         <div className="chat-title">
           <strong>{character.name}</strong>
           <span>{typing ? 'DeepSeek 回覆中…' : model}</span>

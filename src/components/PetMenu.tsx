@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { expression, type Expression } from '../lib/assets';
+import { AVATAR } from '../lib/assets';
 import { Icon } from './Icon';
 import { DEFAULT_SIZES, SIZE_LIMITS, type PetSizes } from '../lib/petSizes';
 import { displayId, type usePetDisplay } from '../hooks/usePetDisplay';
@@ -20,7 +20,6 @@ type Props = {
   /** Distance from the stage bottom: the menu sits just above Shizuku's head. */
   bottom: number;
   status: string;
-  mood: Expression;
   sections: MenuSection[];
   sizes: PetSizes;
   onSizes: (sizes: PetSizes) => void;
@@ -33,7 +32,7 @@ type Props = {
 
 export const MENU_WIDTH = 276;
 
-export function PetMenu({ bottom, status, mood, sections, sizes, onSizes, display, onActions, onDeepSeek, onExit, onClose }: Props) {
+export function PetMenu({ bottom, status, sections, sizes, onSizes, display, onActions, onDeepSeek, onExit, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState<'menu' | 'size' | 'display'>('menu');
 
@@ -60,7 +59,7 @@ export function PetMenu({ bottom, status, mood, sections, sizes, onSizes, displa
       onKeyDown={event => { if (event.key === 'Escape') onClose(); }}
     >
       <header className="menu-header">
-        <span className="avatar" style={{ backgroundImage: `url(${expression(mood)})` }} />
+        <span className="avatar" style={{ backgroundImage: `url(${AVATAR})` }} />
         <div>
           <div className="menu-name">{character.name} <span aria-hidden="true">♡</span></div>
           <div className="menu-status">{status}</div>

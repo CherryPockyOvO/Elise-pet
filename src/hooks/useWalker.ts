@@ -3,13 +3,16 @@ import { isTauri } from '@tauri-apps/api/core';
 import { getCurrentWindow, PhysicalPosition, type Monitor } from '@tauri-apps/api/window';
 import { POSE_FRAMES } from '../lib/assets';
 import { preloadImportedAction, type ImportedAction } from '../lib/actionLibrary';
-import { betweenHeadings, HEADING_STILLS, type Heading, type Side, type TurnFrame } from '../lib/turns';
+import { DEFAULT_GAIT, measuredGait, walkGait } from '../lib/stride';
+import { betweenHeadings, HEADING_STILLS, screenDirection, sideFacing, type Heading, type Side, type TurnFrame } from '../lib/turns';
 import { STAGE_WIDTH } from './usePetDisplay';
 
 /** Width of the pet window / stage. Shizuku's body is centred in it. */
 const PET_CENTER = STAGE_WIDTH / 2;
-
-const WALK_SPEED = 0.145; // Logical pixels per millisecond at the default character size.
+/** Size of the square box the sprite is drawn into at scale 1 (`.pet-group` in style.css). */
+const SPRITE_BOX = 290;
+/** The built-in walk cycle is drawn facing the right edge of the screen. */
+const BUILT_IN_WALK_DIRECTION = 1;
 
 const MIN_STROLL_DISTANCE = 70;
 const SCREEN_EDGE_MARGIN = 56;
@@ -19,21 +22,29 @@ export type WalkPhase = 'off' | 'walk' | 'turn' | 'look' | 'settle' | 'perform';
 type TurnPhase = Exclude<WalkPhase, 'off' | 'walk'>;
 type Facing = 1 | -1;
 export type ConfiguredWalkAction = ImportedAction & { ending?: Heading };
-const sideOf = (facing: Facing): Side => facing < 0 ? 'left' : 'right';
-const randomLegLength = () => 120 + Math.random() * 240;
-const randomPace = () => 0.78 + Math.random() * 0.3;
+const sideOf = (facing: Facing): Side => sideFacing(facing);
 
-function pickLeg(x: number, min: number, max: number, distance: number, minTravel: number, previous?: Facing, preferred?: Side) {
+/**
+ * Frames that end a walk facing `ending`. When no turn is needed the walk would stop
+ * mid-stride, so finish on that heading's standing pose instead.
+ */
+function settleFrames(from: Heading, ending: Heading, fps: Readonly<Record<string, number>>): TurnFrame[] {
+  const frames = betweenHeadings(from, ending, fps);
+  if (frames.length || ending === 'front') return frames;
+  return [{ ...HEADING_STILLS[ending], duration: 1000 / (fps.walk ?? 20) }];
+}
+const randomPace = () => 0.85 + Math.random() * 0.2;
+
+/** Which way to set off: towards the side with more room, unless a side is preferred. */
+function pickDirection(x: number, min: number, max: number, minTravel: number, preferred?: Side): Facing | undefined {
   const roomLeft = x - min;
   const roomRight = max - x;
-  // Prefer an inward heading near the boundary and occasional reversals in open space.
-  const leftWeight = preferred !== 'right' && roomLeft >= minTravel ? Math.min(roomLeft, distance) * (previous === 1 ? 3 : 1) : 0;
-  const rightWeight = preferred !== 'left' && roomRight >= minTravel ? Math.min(roomRight, distance) * (previous === -1 ? 3 : 1) : 0;
+  const only = preferred && screenDirection(preferred);
+  const leftWeight = only !== 1 && roomLeft >= minTravel ? roomLeft : 0;
+  const rightWeight = only !== -1 && roomRight >= minTravel ? roomRight : 0;
   const total = leftWeight + rightWeight;
   if (!total) return;
-  const facing: Facing = Math.random() * total < leftWeight ? -1 : 1;
-  const room = facing < 0 ? roomLeft : roomRight;
-  return { facing, destination: x + facing * Math.min(distance, room) };
+  return Math.random() * total < leftWeight ? -1 : 1;
 }
 
 function walkClip(actions: readonly ConfiguredWalkAction[], facing: Facing) {
@@ -50,6 +61,8 @@ export type WalkerRefs = {
   monitor: RefObject<Monitor | null>;
   walkActions: RefObject<readonly ConfiguredWalkAction[]>;
   actionFps: RefObject<Readonly<Record<string, number>>>;
+  /** Frames that bring the standby loop back to a pose the turns join, before an action. */
+  idleLeadIn: RefObject<() => TurnFrame[]>;
 };
 
 /**
@@ -82,6 +95,10 @@ export function useWalker(refs: WalkerRefs) {
     pace: 1,
     frame: 0,
     frameTime: 0,
+    /** Ground travel per walk frame (fraction of the canvas width) and the feet-together frames. */
+    gait: DEFAULT_GAIT,
+    /** The walk frame to show on arrival, so a leg always ends with the feet together. */
+    arrivalFrame: 0,
     walkClip: undefined as ImportedAction | undefined,
     turnIndex: 0,
     turnTime: 0,
@@ -99,12 +116,11 @@ export function useWalker(refs: WalkerRefs) {
     const s = sim.current;
     const sprite = refs.sprite.current;
     if (!sprite || s.phase === 'off') return;
-    const turn = s.phase === 'walk' ? undefined
-      : s.turnFrames[Math.min(s.turnIndex, s.turnFrames.length - 1)];
-    const still = s.heading === 'front' ? undefined : HEADING_STILLS[s.heading];
     const frame = s.phase === 'walk'
       ? { source: (s.walkClip?.frames ?? POSE_FRAMES.walk)[s.frame], mirrored: !s.walkClip && s.facing < 0 }
-      : turn ?? still ?? { source: POSE_FRAMES.standby[0], mirrored: false };
+      : s.turnFrames[Math.min(s.turnIndex, s.turnFrames.length - 1)];
+    // With no turn to play (already facing that way), keep the pose that is on screen.
+    if (!frame) return;
     const { source, mirrored } = frame;
     if (sprite.getAttribute('src') !== source) sprite.src = source;
     sprite.style.transform = mirrored ? 'scaleX(-1)' : '';
@@ -124,6 +140,65 @@ export function useWalker(refs: WalkerRefs) {
     s.phase = next;
     setPhase(next);
   }, []);
+
+  /** On-screen width of the sprite canvas, in logical pixels. */
+  const spriteWidth = useCallback(() => {
+    const box = SPRITE_BOX * refs.scale.current;
+    const sprite = refs.sprite.current;
+    // `object-fit: contain` narrows canvases that are taller than wide.
+    return sprite && sprite.naturalHeight > sprite.naturalWidth && sprite.naturalWidth
+      ? box * sprite.naturalWidth / sprite.naturalHeight : box;
+  }, [refs.scale, refs.sprite]);
+
+  /**
+   * Sets the destination about `distance` ahead, adjusted so the walk cycle reaches a
+   * feet-together frame exactly on arrival. Stays within `room` when it can.
+   */
+  const planLeg = useCallback((distance: number, room: number) => {
+    const s = sim.current;
+    const count = s.walkClip?.frames.length ?? POSE_FRAMES.walk.length;
+    const frameMs = 1000 / (s.walkClip?.fps ?? refs.actionFps.current.walk ?? 20);
+    const step = s.gait.stride * spriteWidth();
+    // Travel and the frame clock advance together, so k frames from now is a known distance.
+    const phase = s.frameTime / frameMs;
+    const reach = (k: number) => (k - phase) * step;
+    const rests = new Set(s.gait.rest);
+    const lands = (k: number) => rests.has((s.frame + k) % count);
+    const furthest = Math.floor(room / step + phase);
+    const wanted = Math.max(1, Math.round(distance / step + phase));
+    let frames = 0;
+    for (let k = wanted; k <= furthest && !frames; k++) if (lands(k)) frames = k;
+    for (let k = Math.min(wanted, furthest); k >= 1 && !frames; k--) if (lands(k)) frames = k;
+    if (frames) {
+      s.destination = s.x + s.facing * reach(frames);
+      s.arrivalFrame = (s.frame + frames) % count;
+    } else {
+      s.destination = s.x + s.facing * Math.min(distance, room);
+      s.arrivalFrame = -1;
+    }
+  }, [refs.actionFps, spriteWidth]);
+
+  /** Room ahead before the screen-edge margin. */
+  const roomAhead = useCallback(() => {
+    const s = sim.current;
+    return Math.max(0, s.facing > 0 ? s.max - s.x : s.x - s.min);
+  }, []);
+
+  /** Use the measured gait for a walk clip, measuring it in the background the first time. */
+  const applyClipGait = useCallback((clip: ImportedAction | undefined) => {
+    const s = sim.current;
+    const frames = clip?.frames ?? POSE_FRAMES.walk;
+    const direction = clip ? screenDirection(clip.heading as Side) : BUILT_IN_WALK_DIRECTION;
+    s.gait = measuredGait(frames, direction) ?? DEFAULT_GAIT;
+    void walkGait(frames, direction).then(gait => {
+      if (s.walkClip !== clip || s.gait === gait) return;
+      s.gait = gait;
+      // Re-plan the current leg with the real stride so it still ends with the feet together.
+      if (s.phase === 'walk') planLeg(Math.abs(s.destination - s.x), roomAhead());
+    });
+  }, [planLeg, roomAhead]);
+
+  useEffect(() => { void walkGait(POSE_FRAMES.walk, BUILT_IN_WALK_DIRECTION); }, []);
 
   const apply = useCallback(() => {
     const s = sim.current;
@@ -156,41 +231,49 @@ export function useWalker(refs: WalkerRefs) {
     s.last = now;
 
     if (s.phase === 'walk') {
-      const end = s.destination;
-      const remaining = Math.max(0, (end - s.x) * s.facing);
-      const ramp = Math.min(1, Math.abs(s.x - s.segmentStart) / EASE_DISTANCE, remaining / EASE_DISTANCE);
-      // Ease both the animation clock and travel with the same pace.
-      const stride = dt * s.pace * (0.55 + 0.45 * ramp);
-      const travel = WALK_SPEED * refs.scale.current * stride;
-      const reachedEnd = travel >= remaining;
-      s.x = reachedEnd ? end : s.x + s.facing * travel;
-      s.frameTime += stride;
+      const frameCount = s.walkClip?.frames.length ?? POSE_FRAMES.walk.length;
       const frameMs = 1000 / (s.walkClip?.fps ?? refs.actionFps.current.walk ?? 20);
-      const passedFrames = Math.floor(s.frameTime / frameMs);
+      const remaining = Math.max(0, (s.destination - s.x) * s.facing);
+      const ramp = Math.min(1, Math.abs(s.x - s.segmentStart) / EASE_DISTANCE, remaining / EASE_DISTANCE);
+      // Glide continuously, at the average pace the feet move in the artwork: one measured
+      // stride per frame. Easing slows the animation clock and the travel together.
+      const clock = dt * s.pace * (0.55 + 0.45 * ramp);
+      const step = s.gait.stride * spriteWidth();
+      const travel = clock / frameMs * step;
+      const reachedEnd = travel >= remaining;
+      s.x = reachedEnd ? s.destination : s.x + s.facing * travel;
+      s.frameTime += clock;
+      s.frame = (s.frame + Math.floor(s.frameTime / frameMs)) % frameCount;
       s.frameTime %= frameMs;
-      s.frame = (s.frame + passedFrames) % (s.walkClip?.frames.length ?? POSE_FRAMES.walk.length);
       if (reachedEnd) {
         s.flushPosition = true;
-        const next = s.continuous ? pickLeg(s.x, s.min, s.max, randomLegLength(), s.minTravel, s.facing) : undefined;
-        if (!next) {
-          beginTurn('settle', betweenHeadings(s.heading, s.walkEnding, refs.actionFps.current), s.walkEnding);
+        // The leg was planned to end with the feet together; land on exactly that frame.
+        if (s.arrivalFrame >= 0) {
+          s.frame = s.arrivalFrame;
+          s.frameTime = 0;
+        }
+        // Hold that pose for one frame before turning, so the stop reads clearly.
+        const arrival: TurnFrame = {
+          source: (s.walkClip?.frames ?? POSE_FRAMES.walk)[s.frame], mirrored: !s.walkClip && s.facing < 0, duration: frameMs,
+        };
+        s.facing = (-s.facing) as Facing;
+        const roomBack = roomAhead();
+        if (!s.continuous || roomBack < s.minTravel) {
+          s.facing = (-s.facing) as Facing;
+          beginTurn('settle', [arrival, ...settleFrames(s.heading, s.walkEnding, refs.actionFps.current)], s.walkEnding);
         } else {
-          const reversing = next.facing !== s.facing;
-          s.facing = next.facing;
-          s.destination = next.destination;
+          // Reached the edge of the screen: turn round and cross back.
           s.segmentStart = s.x;
           s.pace = randomPace();
           const clip = walkClip(refs.walkActions.current, s.facing);
           s.walkEnding = clip?.ending ?? s.walkFallbackEnding;
-          if (clip?.id !== s.walkClip?.id) {
-            s.walkClip = clip;
-            s.frame = 0;
-            s.frameTime = 0;
-          }
-          if (reversing) {
-            const side = sideOf(s.facing);
-            beginTurn('turn', betweenHeadings(s.heading, side, refs.actionFps.current), side);
-          }
+          s.walkClip = clip;
+          applyClipGait(clip);
+          s.frame = 0;
+          s.frameTime = 0;
+          planLeg(roomBack, roomBack);
+          const side = sideOf(s.facing);
+          beginTurn('turn', [arrival, ...betweenHeadings(s.heading, side, refs.actionFps.current)], side);
         }
       }
     } else if (s.phase !== 'off') {
@@ -218,7 +301,7 @@ export function useWalker(refs: WalkerRefs) {
 
     apply();
     s.raf = s.phase !== 'off' || s.flushPosition ? requestAnimationFrame(tick) : 0;
-  }, [apply, beginTurn, updateHeading, refs.actionFps, refs.scale, refs.walkActions]);
+  }, [apply, applyClipGait, beginTurn, planLeg, roomAhead, spriteWidth, updateHeading, refs.actionFps, refs.walkActions]);
 
   const ensureLoop = useCallback(() => {
     const s = sim.current;
@@ -255,19 +338,16 @@ export function useWalker(refs: WalkerRefs) {
     min += margin;
     max -= margin;
     const minTravel = Math.min(MIN_STROLL_DISTANCE, (max - min) / 2);
-    const length = distance ?? randomLegLength();
     const preferred = options?.preferred ?? (s.heading === 'left' || s.heading === 'right' ? s.heading : undefined);
-    const leg = pickLeg(x, min, max, length, minTravel, undefined, preferred)
-      ?? (preferred && pickLeg(x, min, max, length, minTravel));
-    if (!leg) return;
+    const facing = pickDirection(x, min, max, minTravel, preferred) ?? (preferred && pickDirection(x, min, max, minTravel));
+    if (!facing) return;
 
     s.x = s.segmentStart = x;
     s.windowY = windowY;
     s.dpi = dpi;
     s.min = min;
     s.max = max;
-    s.facing = leg.facing;
-    s.destination = leg.destination;
+    s.facing = facing;
     s.continuous = continuous;
     s.walkFallbackEnding = options?.ending ?? 'front';
     s.minTravel = minTravel;
@@ -279,10 +359,15 @@ export function useWalker(refs: WalkerRefs) {
     const configuredClip = options?.builtIn ? undefined : walkClip(refs.walkActions.current, s.facing);
     s.walkEnding = configuredClip?.ending ?? s.walkFallbackEnding;
     s.walkClip = configuredClip;
-    const side = sideOf(leg.facing);
-    beginTurn('turn', betweenHeadings(s.heading, side, refs.actionFps.current), side);
+    applyClipGait(configuredClip);
+    // A stroll covers the given distance; the menu's walk crosses to the edge of the screen.
+    const room = roomAhead();
+    planLeg(Math.min(distance ?? room, room), room);
+    const side = sideOf(facing);
+    const leadIn = s.phase === 'off' ? refs.idleLeadIn.current() : [];
+    beginTurn('turn', [...leadIn, ...betweenHeadings(s.heading, side, refs.actionFps.current)], side);
     ensureLoop();
-  }, [beginTurn, ensureLoop, refs.actionFps, refs.monitor, refs.walkActions]);
+  }, [applyClipGait, beginTurn, ensureLoop, planLeg, roomAhead, refs.actionFps, refs.idleLeadIn, refs.monitor, refs.walkActions]);
 
   const turnTo = useCallback((ending: Heading, step?: { from: Heading; to: Heading }) => {
     const s = sim.current;
@@ -294,9 +379,9 @@ export function useWalker(refs: WalkerRefs) {
       ...betweenHeadings(step.to, ending, fps),
     ] : betweenHeadings(s.heading, ending, fps);
     if (!frames.length) return;
-    beginTurn('look', frames, ending);
+    beginTurn('look', [...refs.idleLeadIn.current(), ...frames], ending);
     ensureLoop();
-  }, [beginTurn, ensureLoop, refs.actionFps]);
+  }, [beginTurn, ensureLoop, refs.actionFps, refs.idleLeadIn]);
 
   const perform = useCallback((action: Pick<ImportedAction, 'frames' | 'heading' | 'fps'>, ending: Heading, artworkEnding = ending) => {
     const s = sim.current;
@@ -307,23 +392,32 @@ export function useWalker(refs: WalkerRefs) {
       source, mirrored: false, duration: 1000 / action.fps,
     }));
     const departure = betweenHeadings(artworkEnding, ending, refs.actionFps.current);
-    beginTurn('perform', [...approach, ...frames, ...departure], ending);
+    beginTurn('perform', [...refs.idleLeadIn.current(), ...approach, ...frames, ...departure], ending);
     ensureLoop();
-  }, [beginTurn, ensureLoop, refs.actionFps]);
+  }, [beginTurn, ensureLoop, refs.actionFps, refs.idleLeadIn]);
 
   const stop = useCallback((mode: 'keep' | 'front' | 'finish-walk' = 'keep') => {
     const s = sim.current;
     s.token += 1;
     s.flushPosition = false;
     if (mode === 'front') updateHeading('front');
-    if (mode === 'finish-walk' && s.heading !== s.walkEnding) {
-      beginTurn('settle', betweenHeadings(s.heading, s.walkEnding, refs.actionFps.current), s.walkEnding);
+    if (mode === 'finish-walk' && s.phase === 'walk') {
+      // Asked to stop mid-stride: walk on to the next feet-together frame and settle there.
+      s.continuous = false;
+      planLeg(0, roomAhead());
+      ensureLoop();
+      return;
+    }
+    // Stopped partway through a turn: play back what was shown, then turn from there.
+    const unwind = s.phase === 'turn' ? s.turnFrames.slice(0, Math.min(s.turnIndex + 1, s.turnFrames.length)).reverse() : [];
+    if (mode === 'finish-walk') {
+      beginTurn('settle', [...unwind, ...settleFrames(s.heading, s.walkEnding, refs.actionFps.current)], s.walkEnding);
     } else {
       s.phase = 'off';
       setPhase('off');
     }
     ensureLoop();
-  }, [beginTurn, ensureLoop, refs.actionFps, updateHeading]);
+  }, [beginTurn, ensureLoop, planLeg, roomAhead, refs.actionFps, updateHeading]);
 
   const setPaused = useCallback((value: boolean) => {
     const s = sim.current;
@@ -346,5 +440,8 @@ export function useWalker(refs: WalkerRefs) {
     if (element) applySprite();
   }, [applySprite, refs.sprite]);
 
-  return { phase, heading, paused, start, stop, setPaused, turnTo, perform, spriteRef };
+  /** Whether the walker currently owns the sprite (reads live state, not the last render). */
+  const isBusy = useCallback(() => sim.current.phase !== 'off', []);
+
+  return { phase, heading, paused, start, stop, setPaused, turnTo, perform, spriteRef, isBusy };
 }
